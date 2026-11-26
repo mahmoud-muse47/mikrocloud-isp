@@ -527,6 +527,10 @@ ${can(req.user, 'customers.delete') ? `<form method="post" action="/app/customer
     const r = getCust(req, res); if (!r) return;
     const v = custValues(req.body);
     if (!v[0]) return go(res, `/app/customers/${r.id}`, 'err', req.i.t('required'));
+    if (v[7] !== r.service_type && (v[7] === 'hotspot' || v[7] === 'pppoe')) {
+      const k = v[7] === 'hotspot' ? 'max_hotspot' : 'max_pppoe', lr = P.checkLimit(req.user.company_id, k);
+      if (lr) { audit(req, 'limit_blocked', k); return go(res, `/app/customers/${r.id}`, 'err', P.limitMsg(req.i.t, lr)); }
+    }
     run(`UPDATE customers SET full_name=?,phone=?,whatsapp=?,email=?,address=?,location=?,account_type=?,service_type=?,package=?,username=?,sub_start=?,sub_end=?,payment_status=?,status=?,notes=? WHERE id=? AND company_id=?`, ...v, r.id, req.user.company_id);
     audit(req, 'customer_updated', `${r.code} ${v[0]}`);
     go(res, `/app/customers/${r.id}`, 'ok', req.i.t('Saved'));
