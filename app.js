@@ -8,6 +8,7 @@ const { init: devicesInit } = require('./devices');
 const { init: paymentsInit } = require('./payments');
 const { init: financeInit } = require('./finance');
 const { init: vouchersInit } = require('./vouchers');
+const { init: reportsInit } = require('./reports');
 const { infoGrid, esc, page, csrfField, badge, field, select } = V;
 
 const SESSION_TTL = 8 * 3600e3, REMEMBER_TTL = 30 * 24 * 3600e3;
@@ -106,6 +107,7 @@ function createApp(db, opts = {}) {
   paymentsInit({ app, db, q, q1, run, audit, ctx, go, deny, needSuper, needAdmin, nav: (req) => nav(req) });
   const FIN = financeInit({ app, db, q, q1, run, audit, ctx, go, deny, needAdmin, nav: (req) => nav(req) });
   vouchersInit({ app, db, q, q1, run, audit, ctx, go, deny, needAdmin, nav: (req) => nav(req), P });
+  const RPT = reportsInit({ app, q, q1, ctx, needAdmin, deny, nav: (req) => nav(req), P });
   const D = devicesInit({ app, db, q, q1, run, audit, ctx, go, deny, needAdmin, nav: (req) => nav(req) }, P);
 
   // ---- language / root
@@ -215,7 +217,7 @@ ${field(t('Current password'), 'current', '', { type: 'password', req: true })}$
     if (u.role === 'super_admin') return `<a href="/admin">${t('Dashboard')}</a><a href="/admin/companies">${t('Companies')}</a><a href="/admin/plans">${t('Subscription Plans & Pricing')}</a><a href="/admin/payment-methods">${t('Payment Methods')}</a><a href="/admin/payments">${t('Payments')}</a><a href="/admin/audit">${t('Audit log')}</a>`;
     let h = `<a href="/app">${t('Dashboard')}</a>`;
     if (can(u, 'customers.view')) h += `<a href="/app/customers">${t('Customers')}</a>`;
-    if (u.role === 'company_admin') h += `<a href="/app/employees">${t('Employees')}</a><a href="/app/packages">${t('Packages')}</a><a href="/app/vouchers">${t('Vouchers')}</a><a href="/app/finance">${t('Finance')}</a><a href="/app/network">${t('Network Management')}</a><a href="/app/subscription">${t('My Subscription')}</a><a href="/app/settings">${t('Settings')}</a>`;
+    if (u.role === 'company_admin') h += `<a href="/app/employees">${t('Employees')}</a><a href="/app/packages">${t('Packages')}</a><a href="/app/vouchers">${t('Vouchers')}</a><a href="/app/reports">${t('Reports')}</a><a href="/app/notifications">${t('Notifications')}</a><a href="/app/finance">${t('Finance')}</a><a href="/app/network">${t('Network Management')}</a><a href="/app/subscription">${t('My Subscription')}</a><a href="/app/settings">${t('Settings')}</a>`;
     if (can(u, 'audit.view')) h += `<a href="/app/audit">${t('Audit log')}</a>`;
     return h;
   }
@@ -422,13 +424,14 @@ ${can(req.user, 'customers.edit') && req.user.role === 'company_admin' ? FIN.cus
   });
 
   // =============== COMPANY AREA (tenant scoped: company_id ALWAYS from session) ===============
+  const u_isAdmin = (req) => req.user.role === 'company_admin';
   app.get('/app', needCompany, (req, res) => {
     const t = req.i.t, c = ctx(req), cid = req.user.company_id;
     const co = q1('SELECT * FROM companies WHERE id=?', cid);
     const n = (sql, ...a) => q1(sql, cid, ...a).n;
     const stat = (v, l) => `<div class="stat"><b>${v}</b><span>${t(l)}</span></div>`;
     res.send(page(c, 'Dashboard', `<h3>${t('Welcome')}, ${esc(req.user.name)} - ${esc(co.name)} ${badge(statusOf(co), t)}</h3><div class="grid">
-${stat(n('SELECT count(*) n FROM customers WHERE company_id=?'), 'Total customers')}${stat(n("SELECT count(*) n FROM customers WHERE company_id=? AND status='active'"), 'Active')}${stat(n("SELECT count(*) n FROM customers WHERE company_id=? AND payment_status='unpaid'"), 'Unpaid')}${stat(n("SELECT count(*) n FROM users WHERE company_id=? AND role='employee'"), 'Employees')}</div>`, nav(req)));
+${stat(n('SELECT count(*) n FROM customers WHERE company_id=?'), 'Total customers')}${stat(n("SELECT count(*) n FROM customers WHERE company_id=? AND status='active'"), 'Active')}${stat(n("SELECT count(*) n FROM customers WHERE company_id=? AND payment_status='unpaid'"), 'Unpaid')}${stat(n("SELECT count(*) n FROM users WHERE company_id=? AND role='employee'"), 'Employees')}</div>${u_isAdmin(req) ? RPT.dashboard(req) : ''}`, nav(req)));
   });
   const custFields = (t, v = {}) => `<div class="row">${field(t('Full name'), 'full_name', v.full_name, { req: true })}${field(t('Phone'), 'phone', v.phone)}${field(t('WhatsApp'), 'whatsapp', v.whatsapp)}${field(t('Email'), 'email', v.email, { type: 'email' })}${field(t('Address'), 'address', v.address)}${field(t('Location'), 'location', v.location)}
 ${select(t('Account type'), 'account_type', v.account_type, [['individual', 'Individual'], ['business', 'Business']])}${select(t('Service type'), 'service_type', v.service_type, [['pppoe', 'PPPoE'], ['hotspot', 'Hotspot'], ['static', 'Static']])}${field(t('Package'), 'package', v.package)}${field(t('Username'), 'username', v.username)}

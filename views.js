@@ -14,7 +14,7 @@ input,select,textarea{width:100%;padding:9px 10px;border:1px solid var(--bd);bor
 button,.btn{background:var(--p);color:#fff;border:0;border-radius:8px;padding:8px 14px;font:inherit;cursor:pointer;display:inline-block}
 .btn.sec,button.sec{background:#e2e8f0;color:var(--tx)}button.bad{background:var(--bad)}button.ok{background:var(--ok)}
 .row{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:0 14px}.flash{padding:10px 14px;border-radius:8px;margin-bottom:12px}
-.flash.err{background:#fee2e2;color:#991b1b}.flash.ok{background:#dcfce7;color:#166534}.badge{padding:2px 8px;border-radius:99px;font-size:12px;background:#e2e8f0}
+.flash.warn{background:#fef3c7;color:#92400e}.flash.err{background:#fee2e2;color:#991b1b}.flash.ok{background:#dcfce7;color:#166534}.badge{padding:2px 8px;border-radius:99px;font-size:12px;background:#e2e8f0}
 .badge.active,.badge.paid{background:#dcfce7;color:#166534}.badge.suspended,.badge.expired,.badge.unpaid{background:#fee2e2;color:#991b1b}.badge.trial{background:#fef3c7;color:#92400e}
 .login{min-height:100vh;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#0f172a,#1e3a8a)}
 .login .box{background:#fff;border-radius:16px;padding:30px;width:min(400px,92vw);box-shadow:0 20px 50px rgba(0,0,0,.35)}
