@@ -55,7 +55,7 @@ function field(label, name, val = '', opts = {}) {
   const { type = 'text', req = false, ta = false } = opts;
   return `<div><label>${esc(label)}${req ? ' *' : ''}</label>${ta
     ? `<textarea name="${name}" rows="3">${esc(val)}</textarea>`
-    : `<input type="${type}" name="${name}" value="${esc(val)}" ${req ? 'required' : ''} ${type === 'password' ? 'autocomplete="new-password"' : ''}>`}</div>`;
+    : `<input type="${type}" name="${name}" value="${esc(val)}" ${type === 'number' ? 'step="any"' : ''} ${req ? 'required' : ''} ${type === 'password' ? 'autocomplete="new-password"' : ''}>`}</div>`;
 }
 function select(label, name, val, options) {
   return `<div><label>${esc(label)}</label><select name="${name}">${options.map(([v, l]) => `<option value="${esc(v)}" ${String(v) === String(val) ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></div>`;
