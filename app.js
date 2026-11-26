@@ -369,7 +369,6 @@ ${co.status === 'suspended' ? `<p class="flash err">${t('Suspended')}${co.suspen
 <div class="card"><h3>${t('Company profile')}</h3><form method="post" action="/admin/companies/${co.id}/edit">${csrfField(c)}${companyForm(c, t, co)}<p><button>${t('Save')}</button></p></form></div>
 ${P.adminSubscriptionCard(req, c, co)}
 <div class="card"><h3>${t('Employees')}</h3><div class="tbl"><table><tr><th>${t('Name')}</th><th>${t('Username')}</th><th>${t('Role')}</th><th>${t('Status')}</th><th></th></tr>${emps.map((u) => `<tr><td>${esc(u.name)}</td><td>${esc(u.username)}</td><td>${esc(u.role === 'company_admin' ? t('Company admin') : u.emp_role)}</td><td>${badge(u.status, t)}</td><td>${u.role === 'company_admin' ? act(`reset/${u.id}`, t('Reset password link'), 'sec') : ''}</td></tr>`).join('')}</table></div></div>
-${can(req.user, 'customers.edit') && req.user.role === 'company_admin' ? FIN.custSection(req, r) : ''}
 <div class="card"><h3>${t('Recent activity')}</h3><div class="tbl"><table>${acts.map((a) => `<tr><td>${esc(a.ts)}</td><td>${esc(a.action)}</td><td>${esc(a.detail)}</td></tr>`).join('')}</table></div></div>`, nav(req)));
   });
   app.post('/admin/companies/:id/edit', needSuper, (req, res) => {
@@ -521,6 +520,7 @@ ${rows.map((r) => `<tr><td>${esc(r.code)}</td><td>${esc(r.full_name)}</td><td>${
     res.send(page(c, r.full_name, `<div class="card"><h3>${esc(r.code)} - ${esc(r.full_name)} ${badge(r.status, t)}</h3>
 ${editable ? `<form method="post" action="/app/customers/${r.id}/edit">${csrfField(c)}${custFields(t, r)}<p><button>${t('Save')}</button></p></form>` : `<table>${Object.entries(r).filter(([k]) => !['id', 'company_id'].includes(k)).map(([k, v]) => `<tr><th>${esc(k)}</th><td>${esc(v)}</td></tr>`).join('')}</table>`}
 ${can(req.user, 'customers.delete') ? `<form method="post" action="/app/customers/${r.id}/delete" onsubmit="return confirm('${t('Delete')}?')">${csrfField(c)}<button class="bad">${t('Delete')}</button></form>` : ''}</div>
+${can(req.user, 'customers.edit') && req.user.role === 'company_admin' ? FIN.custSection(req, r) : ''}
 <div class="card"><h3>${t('Recent activity')}</h3><table>${hist.map((a) => `<tr><td>${esc(a.ts)}</td><td>${esc(a.action)}</td></tr>`).join('') || `<tr><td>${t('No results')}</td></tr>`}</table></div>`, nav(req)));
   });
   app.post('/app/customers/:id/edit', needCompany, need('customers.edit'), (req, res) => {
