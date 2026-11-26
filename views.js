@@ -6,6 +6,7 @@ a{color:var(--p);text-decoration:none}header{background:#0f172a;color:#fff;displ
 header a{color:#cbd5e1}header a:hover{color:#fff}header .brand{font-weight:700;color:#fff}header .sp{flex:1}
 main{max-width:1100px;margin:20px auto;padding:0 14px}.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:18px;margin-bottom:16px}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}.stat{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:14px}
+.info{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:1px;background:var(--bd);border:1px solid var(--bd);border-radius:12px;overflow:hidden;margin:12px 0}.info>div{background:#fff;padding:12px 14px}.info small{display:block;color:var(--mut);font-size:12px;margin-bottom:4px}.info strong{font-size:15px;font-weight:600;word-break:break-word}.head{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px}.head h3{margin:0;font-size:22px}.acts{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .stat b{display:block;font-size:28px}.stat span{color:var(--mut);font-size:13px}
 table{width:100%;border-collapse:collapse}th,td{padding:8px 10px;border-bottom:1px solid var(--bd);text-align:start;font-size:14px}th{color:var(--mut);font-weight:600}
 .tbl{overflow-x:auto}label{display:block;margin:10px 0 4px;font-size:13px;color:var(--mut)}
@@ -39,6 +40,7 @@ ${user ? `<a href="/account">${esc(user.name)}</a><form class="inline" method="p
 <main>${flash ? `<div class="flash ${flash.type}">${esc(flash.msg)}</div>` : ''}${body}</main><script>${js}</script></body></html>`;
 }
 const csrfField = (ctx) => `<input type="hidden" name="_csrf" value="${esc(ctx.csrf)}">`;
+const infoGrid = (items) => `<div class="info">${items.map(([l, x]) => `<div><small>${esc(l)}</small><strong>${x === undefined || x === null || x === '' ? '-' : x}</strong></div>`).join('')}</div>`;
 const badge = (v, t) => `<span class="badge ${esc(v)}">${esc(t(v[0].toUpperCase() + v.slice(1)))}</span>`;
 function field(label, name, val = '', opts = {}) {
   const { type = 'text', req = false, ta = false } = opts;
@@ -62,4 +64,4 @@ ${err ? `<div class="flash err">${esc(err)}</div>` : ''}
 <p style="margin:14px 0 0"><button style="width:100%">${t('Sign in')}<span class="spin"></span></button></p></form>
 <p style="text-align:center;margin-top:14px"><a href="/lang/${other}?back=/login">${other === 'ar' ? 'العربية' : 'English'}</a></p></div><script>${js}</script></body></html>`;
 }
-module.exports = { esc, page, csrfField, badge, field, select, login };
+module.exports = { infoGrid, esc, page, csrfField, badge, field, select, login };
