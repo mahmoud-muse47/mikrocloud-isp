@@ -39,13 +39,14 @@ function tp(id,b){var i=document.getElementById(id);i.type=i.type==='password'?'
 function page(ctx, title, body, nav = '') {
   const { i, user, csrf, flash, path } = ctx;
   const t = i.t;
+  const side = !!(user && nav && user.role !== 'super_admin');
   const other = i.lang === 'ar' ? 'en' : 'ar';
   return `<!doctype html><html lang="${i.lang}" dir="${i.rtl ? 'rtl' : 'ltr'}"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)} - MikroCloud</title><style>${css}</style></head><body>
-<header><span class="brand">MikroCloud</span>${user && nav ? '' : nav}<span class="sp"></span>
+<header><span class="brand">MikroCloud</span>${side ? '' : nav}<span class="sp"></span>
 <a href="/lang/${other}?back=${encodeURIComponent(path || '/')}">${other === 'ar' ? 'العربية' : 'English'}</a>
 ${user ? `<a href="/account">${esc(user.name)}</a><form class="inline" method="post" action="/logout"><input type="hidden" name="_csrf" value="${esc(csrf)}"><button class="sec">${t('Logout')}</button></form>` : ''}</header>
-${user && nav ? `<div class="shell" style="--dir:${i.rtl ? 'rtl' : 'ltr'}">` : ''}<main>${flash ? `<div class="flash ${flash.type}">${esc(flash.msg)}</div>` : ''}${body}</main>${user && nav ? `<aside class="side" id="side">${nav}</aside></div>` : ''}<script>${js}</script></body></html>`;
+${side ? `<div class="shell" style="--dir:${i.rtl ? 'rtl' : 'ltr'}">` : ''}<main>${flash ? `<div class="flash ${flash.type}">${esc(flash.msg)}</div>` : ''}${body}</main>${side ? `<aside class="side" id="side">${nav}</aside></div>` : ''}<script>${js}</script></body></html>`;
 }
 const csrfField = (ctx) => `<input type="hidden" name="_csrf" value="${esc(ctx.csrf)}">`;
 const infoGrid = (items) => `<div class="info">${items.map(([l, x]) => `<div><small>${esc(l)}</small><strong>${x === undefined || x === null || x === '' ? '-' : x}</strong></div>`).join('')}</div>`;
