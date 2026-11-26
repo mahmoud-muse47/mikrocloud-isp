@@ -2,8 +2,12 @@ const { DatabaseSync } = require('node:sqlite');
 const crypto = require('node:crypto');
 
 function open(file) {
-  const db = new DatabaseSync(file);
-  db.exec('PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;');
+  let target = file;
+  if (process.env.MC_TEST_PG && !/^postgres/.test(String(file))) target = 'pglite://memory';
+  const isPg = /^(postgres(ql)?|pglite):\/\//.test(String(target));
+  let db;
+  if (isPg) { const { PgSync } = require('./pgsync'); db = new PgSync(target); db.isPg = true; db.hasCol = (t, c) => db.hasColumn(t, c); }
+  else { db = new DatabaseSync(file); db.exec('PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;'); db.hasCol = (t, c) => !!db.prepare(`SELECT 1 x FROM pragma_table_info('${t}') WHERE name=?`).get(c); }
   db.exec(`
 CREATE TABLE IF NOT EXISTS companies(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -83,10 +87,10 @@ CREATE INDEX IF NOT EXISTS idx_devices_company ON devices(company_id);
 `);
 
   for (const [col, def] of [['billing_period', "TEXT DEFAULT 'monthly'"], ['price_paid', 'REAL DEFAULT 0'], ['currency', "TEXT DEFAULT 'EGP'"], ['sub_start', 'TEXT'], ['limit_overrides', "TEXT DEFAULT '{}'"], ['logo', "TEXT DEFAULT ''"]]) {
-    if (!db.prepare("SELECT 1 x FROM pragma_table_info('companies') WHERE name=?").get(col)) db.exec(`ALTER TABLE companies ADD COLUMN ${col} ${def}`);
+    if (!db.hasCol('companies', col)) db.exec(`ALTER TABLE companies ADD COLUMN ${col} ${def}`);
   }
   for (const [col, def] of [['hb_token', "TEXT DEFAULT ''"], ['hb_interval', 'INTEGER DEFAULT 5'], ['cred_user', "TEXT DEFAULT ''"], ['cred_enc', "TEXT DEFAULT ''"], ['link_verified', 'INTEGER DEFAULT 0'], ['icon', "TEXT DEFAULT ''"]]) {
-    if (!db.prepare("SELECT 1 x FROM pragma_table_info('devices') WHERE name=?").get(col)) db.exec(`ALTER TABLE devices ADD COLUMN ${col} ${def}`);
+    if (!db.hasCol('devices', col)) db.exec(`ALTER TABLE devices ADD COLUMN ${col} ${def}`);
   }
   db.exec(`CREATE TABLE IF NOT EXISTS device_alerts(id INTEGER PRIMARY KEY AUTOINCREMENT, company_id INTEGER NOT NULL, device_id INTEGER, severity TEXT NOT NULL, kind TEXT NOT NULL, msg TEXT DEFAULT '', ack INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (datetime('now')));
     CREATE TABLE IF NOT EXISTS device_groups(id INTEGER PRIMARY KEY AUTOINCREMENT, company_id INTEGER NOT NULL, name TEXT NOT NULL, UNIQUE(company_id,name));

@@ -3,7 +3,7 @@ const crypto = require('node:crypto');
 const { open, hashPassword } = require('./db');
 const { createApp } = require('./app');
 
-const dbFile = process.env.DB_FILE || path.join(__dirname, 'data.sqlite');
+const dbFile = process.env.DATABASE_URL || process.env.DB_FILE || path.join(__dirname, 'data.sqlite');
 const db = open(dbFile);
 if (!db.prepare("SELECT 1 x FROM users WHERE role='super_admin'").get()) {
   const email = (process.env.SUPERADMIN_EMAIL || 'admin@mikrocloud.local').toLowerCase();
