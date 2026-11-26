@@ -10,7 +10,7 @@ const ar = {
   'Company name':'اسم العميل','Network name':'اسم الشبكة','Owner name':'اسم المالك','WhatsApp':'واتساب','Country':'الدولة','City':'المدينة',
   'Address':'العنوان','Notes':'ملاحظات','Admin username':'اسم مستخدم المدير','Admin password':'كلمة مرور المدير','Registered':'تاريخ التسجيل',
   'Trial ends':'نهاية التجربة','Subscription ends':'نهاية الاشتراك','Reset password link':'رابط إعادة تعيين كلمة المرور','Export':'تصدير',
-  'Full name':'الاسم الكامل','Username':'اسم المستخدم','Package':'الباقة','Payment status':'حالة الدفع','Paid':'مدفوع','Unpaid':'غير مدفوع',
+  'Full name':'الاسم الكامل','Username':'اسم المستخدم','Package':'الباقة','Payment status':'حالة الدفع','Paid':'مدفوع','Unpaid':'غير مدفوع','Partial':'مدفوع جزئياً',
   'Location':'الموقع','Account type':'نوع الحساب','Service type':'نوع الخدمة','Subscription start':'بداية الاشتراك','Customer ID':'رقم المشترك',
   'Role':'الدور','Permissions':'الصلاحيات','Current password':'كلمة المرور الحالية','New password':'كلمة مرور جديدة','Confirm new password':'تأكيد كلمة المرور',
   'Change password':'تغيير كلمة المرور','Active sessions':'الجلسات النشطة','Logout other sessions':'خروج من الأجهزة الأخرى','Login history':'سجل الدخول',
