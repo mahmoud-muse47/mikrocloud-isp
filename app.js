@@ -1,0 +1,483 @@
+const express = require('express');
+const crypto = require('node:crypto');
+const { hashPassword, verifyPassword, passwordProblem, sha } = require('./db');
+const { make } = require('./i18n');
+const V = require('./views');
+const { esc, page, csrfField, badge, field, select } = V;
+
+const SESSION_TTL = 8 * 3600e3, REMEMBER_TTL = 30 * 24 * 3600e3;
+const MAX_FAILS = 5, LOCK_MS = 15 * 60e3;
+const CUSTOMER_PERMS = ['customers.view', 'customers.add', 'customers.edit', 'customers.delete', 'customers.export', 'audit.view'];
+const ROLE_PRESETS = {
+  'Company Manager': CUSTOMER_PERMS,
+  'Network Administrator': ['customers.view', 'customers.edit'],
+  'Technical Support': ['customers.view', 'customers.edit'],
+  'Sales Employee': ['customers.view', 'customers.add'],
+  'Cashier': ['customers.view'],
+  'Read-only Employee': ['customers.view'],
+};
+const PLANS = ['trial', 'basic', 'pro', 'enterprise'];
+const nowIso = () => new Date().toISOString().slice(0, 19).replace('T', ' ');
+const addDays = (d, n) => new Date(d.getTime() + n * 864e5).toISOString().slice(0, 10);
+const clean = (v, max = 300) => String(v ?? '').trim().slice(0, max);
+
+function createApp(db, opts = {}) {
+  const app = express();
+  app.disable('x-powered-by');
+  app.set('trust proxy', opts.trustProxy ? 1 : false);
+  app.use(express.urlencoded({ extended: false, limit: '100kb' }));
+  const ipHits = new Map(); // simple per-IP login throttle
+
+  const q = (sql, ...a) => db.prepare(sql).all(...a);
+  const q1 = (sql, ...a) => db.prepare(sql).get(...a);
+  const run = (sql, ...a) => db.prepare(sql).run(...a);
+  const audit = (req, action, detail = '', companyId = undefined) =>
+    run('INSERT INTO audit_log(company_id,user_id,action,detail,ip) VALUES(?,?,?,?,?)',
+      companyId !== undefined ? companyId : (req.user ? req.user.company_id : null), req.user ? req.user.id : null, action, detail, req.ip);
+
+  // ---- context: language, session, csrf
+  app.use((req, res, next) => {
+    const cookies = Object.fromEntries((req.headers.cookie || '').split(';').map((c) => c.trim().split('=')).filter((p) => p[0]).map(([k, ...v]) => [k, decodeURIComponent(v.join('='))]));
+    req.cookies = cookies;
+    req.i = make(cookies.lang === 'en' ? 'en' : 'ar');
+    req.user = null; req.session = null;
+    if (cookies.sid) {
+      const s = q1('SELECT * FROM sessions WHERE token_hash=?', sha(cookies.sid));
+      if (s && s.expires_at > Date.now()) {
+        const u = q1('SELECT * FROM users WHERE id=?', s.user_id);
+        const c = u && u.company_id ? q1('SELECT status FROM companies WHERE id=?', u.company_id) : null;
+        if (u && u.status === 'active' && !(c && c.status === 'suspended')) {
+          req.user = u; req.session = s;
+          u.perms = u.role === 'employee' ? JSON.parse(u.permissions) : null;
+          run('UPDATE sessions SET last_seen=? WHERE token_hash=?', Date.now(), s.token_hash);
+        } else run('DELETE FROM sessions WHERE token_hash=?', s.token_hash);
+      } else if (s) run('DELETE FROM sessions WHERE token_hash=?', s.token_hash);
+    }
+    req.csrf = req.session ? req.session.csrf : (cookies.pre || '');
+    if (!req.session && !cookies.pre) {
+      req.csrf = crypto.randomBytes(16).toString('hex');
+      res.append('Set-Cookie', `pre=${req.csrf}; HttpOnly; SameSite=Lax; Path=/`);
+    }
+    const f = cookies.flash;
+    if (f) { try { req.flash = JSON.parse(f); } catch { } res.append('Set-Cookie', 'flash=; Max-Age=0; Path=/'); }
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'same-origin');
+    res.setHeader('Cache-Control', 'no-store');
+    next();
+  });
+  app.use((req, res, next) => {
+    if (req.method === 'POST') {
+      const tok = req.body && req.body._csrf;
+      if (!tok || !req.csrf || tok.length !== req.csrf.length || !crypto.timingSafeEqual(Buffer.from(tok), Buffer.from(req.csrf)))
+        return res.status(403).send('Invalid CSRF token');
+    }
+    next();
+  });
+  const ctx = (req) => ({ i: req.i, user: req.user, csrf: req.csrf, flash: req.flash, path: req.originalUrl });
+  const setFlash = (res, type, msg) => res.append('Set-Cookie', `flash=${encodeURIComponent(JSON.stringify({ type, msg }))}; Path=/; HttpOnly; SameSite=Lax; Max-Age=30`);
+  const go = (res, url, type, msg) => { if (type) setFlash(res, type, msg); res.redirect(303, url); };
+  const deny = (req, res, code = 403) => res.status(code).send(page(ctx(req), 'Error', `<div class="card"><h3>${req.i.t(code === 404 ? 'Not found' : 'Forbidden')}</h3></div>`));
+
+  // ---- guards
+  const needLogin = (req, res, next) => (req.user ? next() : res.redirect(303, '/login'));
+  const needSuper = (req, res, next) => (req.user && req.user.role === 'super_admin' ? next() : req.user ? deny(req, res) : res.redirect(303, '/login'));
+  const needCompany = (req, res, next) => (req.user && req.user.company_id ? next() : req.user ? deny(req, res) : res.redirect(303, '/login'));
+  const can = (u, perm) => u.role === 'company_admin' || (u.role === 'employee' && u.perms.includes(perm));
+  const need = (perm) => (req, res, next) => (can(req.user, perm) ? next() : deny(req, res));
+  const home = (u) => (u.role === 'super_admin' ? '/admin' : '/app');
+
+  // ---- language / root
+  app.get('/lang/:l', (req, res) => {
+    res.append('Set-Cookie', `lang=${req.params.l === 'en' ? 'en' : 'ar'}; Path=/; Max-Age=31536000; SameSite=Lax`);
+    const back = String(req.query.back || '/');
+    res.redirect(303, back.startsWith('/') && !back.startsWith('//') ? back : '/');
+  });
+  app.get('/', (req, res) => res.redirect(303, req.user ? home(req.user) : '/login'));
+  app.get('/health', (req, res) => res.json({ ok: true }));
+
+  // ---- auth
+  app.get('/login', (req, res) => (req.user ? res.redirect(303, home(req.user)) : res.send(V.login(ctx(req), req.flash && req.flash.msg))));
+  app.post('/login', (req, res) => {
+    const t = req.i.t;
+    const fail = (msg, status = 401) => res.status(status).send(V.login(ctx(req), t(msg)));
+    const ident = clean(req.body.identifier, 200).toLowerCase(), pw = String(req.body.password || '');
+    const hits = (ipHits.get(req.ip) || []).filter((x) => x > Date.now() - 10 * 60e3);
+    if (hits.length >= 30) return fail('Too many attempts', 429);
+    hits.push(Date.now()); ipHits.set(req.ip, hits);
+    const u = q1('SELECT * FROM users WHERE lower(username)=? OR lower(email)=?', ident, ident);
+    const log = (ok, reason) => run('INSERT INTO login_history(user_id,identifier,success,reason,ip) VALUES(?,?,?,?,?)', u ? u.id : null, ident, ok ? 1 : 0, reason, req.ip);
+    if (!u) { verifyPassword(pw, 'scrypt$00$00'); log(0, 'unknown'); return fail('Invalid credentials'); }
+    if (u.locked_until > Date.now()) { log(0, 'locked'); return fail('Account locked, try later', 423); }
+    if (!verifyPassword(pw, u.password_hash)) {
+      const n = u.failed_attempts + 1;
+      if (n >= MAX_FAILS) run('UPDATE users SET failed_attempts=0, locked_until=? WHERE id=?', Date.now() + LOCK_MS, u.id);
+      else run('UPDATE users SET failed_attempts=? WHERE id=?', n, u.id);
+      log(0, 'bad_password'); return fail('Invalid credentials');
+    }
+    if (u.status !== 'active') { log(0, 'disabled'); return fail('Invalid credentials'); }
+    if (u.company_id) {
+      const c = q1('SELECT status FROM companies WHERE id=?', u.company_id);
+      if (!c || c.status === 'suspended') { log(0, 'company_suspended'); return fail('Company is suspended', 403); }
+    }
+    run('UPDATE users SET failed_attempts=0, locked_until=0, last_login_at=?, last_login_ip=? WHERE id=?', nowIso(), req.ip, u.id);
+    log(1, 'ok');
+    const token = crypto.randomBytes(32).toString('hex'), csrf = crypto.randomBytes(16).toString('hex');
+    const ttl = req.body.remember ? REMEMBER_TTL : SESSION_TTL;
+    run('INSERT INTO sessions(token_hash,user_id,csrf,ip,ua,created_at,last_seen,expires_at) VALUES(?,?,?,?,?,?,?,?)',
+      sha(token), u.id, csrf, req.ip, clean(req.headers['user-agent'], 200), Date.now(), Date.now(), Date.now() + ttl);
+    res.append('Set-Cookie', `sid=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${Math.floor(ttl / 1000)}${opts.secureCookies ? '; Secure' : ''}`);
+    req.user = u;
+    audit(req, 'login', '', u.company_id);
+    res.redirect(303, home(u));
+  });
+  app.post('/logout', needLogin, (req, res) => {
+    audit(req, 'logout');
+    run('DELETE FROM sessions WHERE token_hash=?', req.session.token_hash);
+    res.append('Set-Cookie', 'sid=; Max-Age=0; Path=/');
+    res.redirect(303, '/login');
+  });
+
+  // ---- password reset via one-time link (issued by super admin)
+  app.get('/reset/:token', (req, res) => {
+    const r = q1('SELECT * FROM reset_tokens WHERE token_hash=? AND used=0 AND expires_at>?', sha(req.params.token), Date.now());
+    const c = ctx(req), t = req.i.t;
+    if (!r) return res.status(400).send(page(c, 'Reset', `<div class="card"><h3>${t('Invalid or expired link')}</h3></div>`));
+    res.send(page(c, 'Reset', `<div class="card" style="max-width:420px;margin:auto"><h3>${t('Set new password')}</h3>
+<form method="post">${csrfField(c)}${field(t('New password'), 'password', '', { type: 'password', req: true })}${field(t('Confirm new password'), 'confirm', '', { type: 'password', req: true })}<p><button>${t('Save')}</button></p></form></div>`));
+  });
+  app.post('/reset/:token', (req, res) => {
+    const t = req.i.t, c = ctx(req);
+    const r = q1('SELECT * FROM reset_tokens WHERE token_hash=? AND used=0 AND expires_at>?', sha(req.params.token), Date.now());
+    if (!r) return res.status(400).send(page(c, 'Reset', `<div class="card"><h3>${t('Invalid or expired link')}</h3></div>`));
+    const pw = String(req.body.password || ''), prob = passwordProblem(pw);
+    if (prob || pw !== req.body.confirm) return go(res, req.originalUrl, 'err', t(prob || 'pw_mismatch'));
+    run('UPDATE users SET password_hash=?, failed_attempts=0, locked_until=0 WHERE id=?', hashPassword(pw), r.user_id);
+    run('UPDATE reset_tokens SET used=1 WHERE token_hash=?', r.token_hash);
+    run('DELETE FROM sessions WHERE user_id=?', r.user_id);
+    const u = q1('SELECT company_id FROM users WHERE id=?', r.user_id);
+    audit(req, 'password_reset_completed', `user ${r.user_id}`, u.company_id);
+    go(res, '/login', 'ok', t('Password updated, you can sign in'));
+  });
+
+  // ---- account (any logged-in user)
+  app.get('/account', needLogin, (req, res) => {
+    const c = ctx(req), t = req.i.t;
+    const sessions = q('SELECT * FROM sessions WHERE user_id=? ORDER BY last_seen DESC', req.user.id);
+    const hist = q('SELECT * FROM login_history WHERE user_id=? ORDER BY id DESC LIMIT 15', req.user.id);
+    res.send(page(c, 'Account', `<div class="card"><h3>${t('Change password')}</h3><form method="post" action="/account/password">${csrfField(c)}<div class="row">
+${field(t('Current password'), 'current', '', { type: 'password', req: true })}${field(t('New password'), 'password', '', { type: 'password', req: true })}${field(t('Confirm new password'), 'confirm', '', { type: 'password', req: true })}</div><p><button>${t('Save')}</button></p></form></div>
+<div class="card"><h3>${t('Active sessions')}</h3><div class="tbl"><table><tr><th>IP</th><th>Device</th><th>Last</th><th></th></tr>${sessions.map((s) => `<tr><td>${esc(s.ip)}</td><td>${esc(s.ua)}</td><td>${new Date(s.last_seen).toISOString().slice(0, 19).replace('T', ' ')}</td><td>${s.token_hash === req.session.token_hash ? '&#9679;' : ''}</td></tr>`).join('')}</table></div>
+<form method="post" action="/account/logout-others">${csrfField(c)}<p><button class="sec">${t('Logout other sessions')}</button></p></form></div>
+<div class="card"><h3>${t('Login history')}</h3><div class="tbl"><table><tr><th>Time</th><th>IP</th><th>Result</th></tr>${hist.map((h) => `<tr><td>${esc(h.ts)}</td><td>${esc(h.ip)}</td><td>${h.success ? 'OK' : esc(h.reason)}</td></tr>`).join('')}</table></div></div>`, nav(req)));
+  });
+  app.post('/account/password', needLogin, (req, res) => {
+    const t = req.i.t, pw = String(req.body.password || '');
+    if (!verifyPassword(String(req.body.current || ''), req.user.password_hash)) { audit(req, 'password_change_failed'); return go(res, '/account', 'err', t('pw_wrong')); }
+    const prob = passwordProblem(pw);
+    if (prob) return go(res, '/account', 'err', t(prob));
+    if (pw !== req.body.confirm) return go(res, '/account', 'err', t('pw_mismatch'));
+    run('UPDATE users SET password_hash=? WHERE id=?', hashPassword(pw), req.user.id);
+    run('DELETE FROM sessions WHERE user_id=? AND token_hash<>?', req.user.id, req.session.token_hash);
+    audit(req, 'password_changed');
+    go(res, '/account', 'ok', t('Saved'));
+  });
+  app.post('/account/logout-others', needLogin, (req, res) => {
+    run('DELETE FROM sessions WHERE user_id=? AND token_hash<>?', req.user.id, req.session.token_hash);
+    audit(req, 'logout_other_sessions');
+    go(res, '/account', 'ok', req.i.t('Saved'));
+  });
+
+  function nav(req) {
+    const t = req.i.t, u = req.user;
+    if (!u) return '';
+    if (u.role === 'super_admin') return `<a href="/admin">${t('Dashboard')}</a><a href="/admin/companies">${t('Companies')}</a><a href="/admin/audit">${t('Audit log')}</a>`;
+    let h = `<a href="/app">${t('Dashboard')}</a>`;
+    if (can(u, 'customers.view')) h += `<a href="/app/customers">${t('Customers')}</a>`;
+    if (u.role === 'company_admin') h += `<a href="/app/employees">${t('Employees')}</a><a href="/app/settings">${t('Settings')}</a>`;
+    if (can(u, 'audit.view')) h += `<a href="/app/audit">${t('Audit log')}</a>`;
+    return h;
+  }
+
+  // =============== SUPER ADMIN ===============
+  const statusOf = (c) => {
+    if (c.status === 'suspended') return 'suspended';
+    const end = c.subscription_ends || c.trial_ends;
+    if (end && end < new Date().toISOString().slice(0, 10)) return 'expired';
+    return c.status;
+  };
+  app.get('/admin', needSuper, (req, res) => {
+    const t = req.i.t, c = ctx(req);
+    const comps = q('SELECT * FROM companies');
+    const cnt = (s) => comps.filter((x) => statusOf(x) === s).length;
+    const customers = q1('SELECT count(*) n FROM customers').n;
+    const recent = q('SELECT a.*, c.name cname FROM audit_log a LEFT JOIN companies c ON c.id=a.company_id ORDER BY a.id DESC LIMIT 10');
+    const stat = (n, l) => `<div class="stat"><b>${n}</b><span>${t(l)}</span></div>`;
+    res.send(page(c, 'Dashboard', `<div class="grid">${stat(comps.length, 'Total companies')}${stat(cnt('active'), 'Active companies')}${stat(cnt('trial'), 'Trial companies')}${stat(cnt('suspended'), 'Suspended companies')}${stat(cnt('expired'), 'Expired subscriptions')}${stat(customers, 'Total customers')}</div>
+<div class="card" style="margin-top:16px"><h3>${t('Recent activity')}</h3><div class="tbl"><table>${recent.map((a) => `<tr><td>${esc(a.ts)}</td><td>${esc(a.cname || '-')}</td><td>${esc(a.action)}</td><td>${esc(a.detail)}</td></tr>`).join('') || `<tr><td>${t('No results')}</td></tr>`}</table></div></div>`, nav(req)));
+  });
+  app.get('/admin/audit', needSuper, (req, res) => {
+    const rows = q('SELECT a.*, c.name cname, u.username FROM audit_log a LEFT JOIN companies c ON c.id=a.company_id LEFT JOIN users u ON u.id=a.user_id ORDER BY a.id DESC LIMIT 200');
+    res.send(page(ctx(req), 'Audit', `<div class="card tbl"><table><tr><th>Time</th><th>Company</th><th>User</th><th>Action</th><th>Detail</th><th>IP</th></tr>${rows.map((a) => `<tr><td>${esc(a.ts)}</td><td>${esc(a.cname || '-')}</td><td>${esc(a.username || '-')}</td><td>${esc(a.action)}</td><td>${esc(a.detail)}</td><td>${esc(a.ip)}</td></tr>`).join('')}</table></div>`, nav(req)));
+  });
+  app.get('/admin/companies', needSuper, (req, res) => {
+    const t = req.i.t, c = ctx(req);
+    const s = clean(req.query.q, 100), st = clean(req.query.status, 20);
+    let rows = q('SELECT c.*, (SELECT count(*) FROM customers WHERE company_id=c.id) cust FROM companies c WHERE (c.name LIKE ? OR c.owner_name LIKE ? OR c.email LIKE ?) ORDER BY c.id DESC', `%${s}%`, `%${s}%`, `%${s}%`);
+    if (st) rows = rows.filter((r) => statusOf(r) === st);
+    res.send(page(c, 'Companies', `<div class="card"><form method="get" class="row"><div><input name="q" value="${esc(s)}" placeholder="${t('Search')}"></div>
+${select(t('Status'), 'status', st, [['', t('All')], ['active', t('Active')], ['trial', t('Trial')], ['suspended', t('Suspended')], ['expired', t('Expired')]])}<div style="padding-top:22px"><button>${t('Search')}</button> <a class="btn sec" href="/admin/companies/new">${t('New company')}</a></div></form></div>
+<div class="card tbl"><table><tr><th>#</th><th>${t('Company name')}</th><th>${t('Owner name')}</th><th>${t('Plan')}</th><th>${t('Status')}</th><th>${t('Customers')}</th><th></th></tr>
+${rows.map((r) => `<tr><td>${r.id}</td><td>${esc(r.name)}</td><td>${esc(r.owner_name)}</td><td>${esc(r.plan)}</td><td>${badge(statusOf(r), t)}</td><td>${r.cust}</td><td><a href="/admin/companies/${r.id}">${t('View')}</a></td></tr>`).join('') || `<tr><td colspan="7">${t('No results')}</td></tr>`}</table></div>`, nav(req)));
+  });
+  const companyForm = (c, t, co = {}) => `<div class="row">${field(t('Company name'), 'name', co.name, { req: true })}${field(t('Network name'), 'network_name', co.network_name)}${field(t('Owner name'), 'owner_name', co.owner_name)}
+${field(t('Email'), 'email', co.email, { req: true, type: 'email' })}${field(t('Phone'), 'phone', co.phone)}${field(t('WhatsApp'), 'whatsapp', co.whatsapp)}${field(t('Country'), 'country', co.country || 'EG')}${field(t('City'), 'city', co.city)}${field(t('Address'), 'address', co.address)}</div>${field(t('Notes'), 'notes', co.notes, { ta: true })}`;
+  app.get('/admin/companies/new', needSuper, (req, res) => {
+    const t = req.i.t, c = ctx(req);
+    res.send(page(c, 'New company', `<div class="card"><h3>${t('New company')}</h3><form method="post" action="/admin/companies">${csrfField(c)}${companyForm(c, t)}<div class="row">
+${select(t('Plan'), 'plan', 'trial', PLANS.map((p) => [p, p]))}${field(t('Admin username'), 'admin_username', '', { req: true })}${field(t('Admin password'), 'admin_password', '', { type: 'password', req: true })}</div><p><button>${t('Save')}<span class="spin"></span></button></p></form></div>`, nav(req)));
+  });
+  app.post('/admin/companies', needSuper, (req, res) => {
+    const t = req.i.t, b = req.body;
+    const name = clean(b.name), email = clean(b.email, 200).toLowerCase(), au = clean(b.admin_username, 60).toLowerCase(), ap = String(b.admin_password || '');
+    if (!name || !email || !au) return go(res, '/admin/companies/new', 'err', t('required'));
+    const prob = passwordProblem(ap);
+    if (prob) return go(res, '/admin/companies/new', 'err', t(prob));
+    if (q1('SELECT 1 x FROM users WHERE lower(username)=? OR lower(email)=?', au, email)) return go(res, '/admin/companies/new', 'err', t('duplicate'));
+    const plan = PLANS.includes(b.plan) ? b.plan : 'trial';
+    let cid;
+    db.exec('BEGIN');
+    try {
+      cid = run(`INSERT INTO companies(name,network_name,owner_name,email,phone,whatsapp,country,city,address,plan,status,trial_ends,subscription_ends,notes) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        name, clean(b.network_name), clean(b.owner_name), email, clean(b.phone, 40), clean(b.whatsapp, 40), clean(b.country, 40), clean(b.city, 80), clean(b.address, 300), plan,
+        plan === 'trial' ? 'trial' : 'active', plan === 'trial' ? addDays(new Date(), 14) : null, plan === 'trial' ? null : addDays(new Date(), 30), clean(b.notes, 1000)).lastInsertRowid;
+      run(`INSERT INTO users(company_id,name,username,email,phone,password_hash,role) VALUES(?,?,?,?,?,?, 'company_admin')`, cid, clean(b.owner_name) || name, au, email, clean(b.phone, 40), hashPassword(ap));
+      db.exec('COMMIT');
+    } catch (e) { db.exec('ROLLBACK'); return go(res, '/admin/companies/new', 'err', t('duplicate')); }
+    audit(req, 'company_created', name, cid);
+    go(res, `/admin/companies/${cid}`, 'ok', t('Created'));
+  });
+  const getCompany = (req, res) => { const c = q1('SELECT * FROM companies WHERE id=?', Number(req.params.id)); if (!c) { deny(req, res, 404); return null; } return c; };
+  app.get('/admin/companies/:id', needSuper, (req, res) => {
+    const co = getCompany(req, res); if (!co) return;
+    const t = req.i.t, c = ctx(req);
+    const emps = q('SELECT * FROM users WHERE company_id=? ORDER BY id', co.id);
+    const cust = q1('SELECT count(*) n FROM customers WHERE company_id=?', co.id).n;
+    const acts = q('SELECT * FROM audit_log WHERE company_id=? ORDER BY id DESC LIMIT 15', co.id);
+    const act = (path, label, cls = '') => `<form class="inline" method="post" action="/admin/companies/${co.id}/${path}">${csrfField(c)}<button class="${cls}">${label}</button></form>`;
+    const link = req.flash && req.flash.link ? '' : '';
+    res.send(page(c, co.name, `<div class="card"><h3>${esc(co.name)} ${badge(statusOf(co), t)}</h3>
+<p class="mut">${t('Plan')}: ${esc(co.plan)} | ${t('Trial ends')}: ${esc(co.trial_ends || '-')} | ${t('Subscription ends')}: ${esc(co.subscription_ends || '-')} | ${t('Registered')}: ${esc(co.created_at)} | ${t('Customers')}: ${cust}</p>
+<p>${co.status === 'suspended' ? act('status', t('Activate'), 'ok') : act('status', t('Suspend'), 'bad')} <a class="btn sec" href="/admin/companies/${co.id}/export">${t('Export')}</a></p>
+<form method="post" action="/admin/companies/${co.id}/extend" class="row">${csrfField(c)}${field(t('Days'), 'days', '30', { type: 'number' })}<div style="padding-top:22px"><button>${t('Extend')}</button></div></form></div>
+<div class="card"><h3>${t('Company profile')}</h3><form method="post" action="/admin/companies/${co.id}/edit">${csrfField(c)}${companyForm(c, t, co)}${select(t('Plan'), 'plan', co.plan, PLANS.map((p) => [p, p]))}<p><button>${t('Save')}</button></p></form></div>
+<div class="card"><h3>${t('Employees')}</h3><div class="tbl"><table><tr><th>${t('Name')}</th><th>${t('Username')}</th><th>${t('Role')}</th><th>${t('Status')}</th><th></th></tr>${emps.map((u) => `<tr><td>${esc(u.name)}</td><td>${esc(u.username)}</td><td>${esc(u.role === 'company_admin' ? t('Company admin') : u.emp_role)}</td><td>${badge(u.status, t)}</td><td>${u.role === 'company_admin' ? act(`reset/${u.id}`, t('Reset password link'), 'sec') : ''}</td></tr>`).join('')}</table></div></div>
+<div class="card"><h3>${t('Recent activity')}</h3><div class="tbl"><table>${acts.map((a) => `<tr><td>${esc(a.ts)}</td><td>${esc(a.action)}</td><td>${esc(a.detail)}</td></tr>`).join('')}</table></div></div>`, nav(req)));
+  });
+  app.post('/admin/companies/:id/edit', needSuper, (req, res) => {
+    const co = getCompany(req, res); if (!co) return;
+    const t = req.i.t, b = req.body, name = clean(b.name), email = clean(b.email, 200).toLowerCase();
+    if (!name || !email) return go(res, `/admin/companies/${co.id}`, 'err', t('required'));
+    run(`UPDATE companies SET name=?,network_name=?,owner_name=?,email=?,phone=?,whatsapp=?,country=?,city=?,address=?,notes=?,plan=? WHERE id=?`,
+      name, clean(b.network_name), clean(b.owner_name), email, clean(b.phone, 40), clean(b.whatsapp, 40), clean(b.country, 40), clean(b.city, 80), clean(b.address, 300), clean(b.notes, 1000), PLANS.includes(b.plan) ? b.plan : co.plan, co.id);
+    audit(req, 'company_updated', name, co.id);
+    go(res, `/admin/companies/${co.id}`, 'ok', t('Updated'));
+  });
+  app.post('/admin/companies/:id/status', needSuper, (req, res) => {
+    const co = getCompany(req, res); if (!co) return;
+    const to = co.status === 'suspended' ? (co.plan === 'trial' ? 'trial' : 'active') : 'suspended';
+    run('UPDATE companies SET status=? WHERE id=?', to, co.id);
+    if (to === 'suspended') run('DELETE FROM sessions WHERE user_id IN (SELECT id FROM users WHERE company_id=?)', co.id);
+    audit(req, to === 'suspended' ? 'company_suspended' : 'company_activated', co.name, co.id);
+    go(res, `/admin/companies/${co.id}`, 'ok', req.i.t('Updated'));
+  });
+  app.post('/admin/companies/:id/extend', needSuper, (req, res) => {
+    const co = getCompany(req, res); if (!co) return;
+    const days = parseInt(req.body.days, 10);
+    if (!(days >= 1 && days <= 3650)) return go(res, `/admin/companies/${co.id}`, 'err', req.i.t('required'));
+    const base = new Date(Math.max(Date.now(), new Date(co.subscription_ends || co.trial_ends || 0).getTime()));
+    const col = co.plan === 'trial' && !co.subscription_ends ? 'trial_ends' : 'subscription_ends';
+    run(`UPDATE companies SET ${col}=? WHERE id=?`, addDays(base, days), co.id);
+    audit(req, 'subscription_extended', `${days} days`, co.id);
+    go(res, `/admin/companies/${co.id}`, 'ok', req.i.t('Updated'));
+  });
+  app.post('/admin/companies/:id/reset/:uid', needSuper, (req, res) => {
+    const co = getCompany(req, res); if (!co) return;
+    const u = q1("SELECT * FROM users WHERE id=? AND company_id=? AND role='company_admin'", Number(req.params.uid), co.id);
+    if (!u) return deny(req, res, 404);
+    const token = crypto.randomBytes(24).toString('hex');
+    run('INSERT INTO reset_tokens(token_hash,user_id,expires_at,created_by) VALUES(?,?,?,?)', sha(token), u.id, Date.now() + 24 * 3600e3, req.user.id);
+    audit(req, 'password_reset_link_issued', u.username, co.id);
+    const c = ctx(req), t = req.i.t;
+    const url = `${opts.baseUrl || `${req.protocol}://${req.get('host')}`}/reset/${token}`;
+    res.send(page(c, 'Reset', `<div class="card"><h3>${t('Reset password link')}</h3><p>${t('Link valid for 24 hours. Give it to the client admin. It can be used once.')}</p><p><input readonly value="${esc(url)}" onfocus="this.select()"></p><p><a class="btn" href="/admin/companies/${co.id}">${t('Company profile')}</a></p></div>`, nav(req)));
+  });
+  app.get('/admin/companies/:id/export', needSuper, (req, res) => {
+    const co = getCompany(req, res); if (!co) return;
+    audit(req, 'company_exported', co.name, co.id);
+    const users = q('SELECT id,name,username,email,role,emp_role,status,last_login_at FROM users WHERE company_id=?', co.id);
+    res.setHeader('Content-Disposition', `attachment; filename="company-${co.id}.json"`);
+    res.json({ company: co, users, customers: q('SELECT * FROM customers WHERE company_id=?', co.id) });
+  });
+
+  // =============== COMPANY AREA (tenant scoped: company_id ALWAYS from session) ===============
+  app.get('/app', needCompany, (req, res) => {
+    const t = req.i.t, c = ctx(req), cid = req.user.company_id;
+    const co = q1('SELECT * FROM companies WHERE id=?', cid);
+    const n = (sql, ...a) => q1(sql, cid, ...a).n;
+    const stat = (v, l) => `<div class="stat"><b>${v}</b><span>${t(l)}</span></div>`;
+    res.send(page(c, 'Dashboard', `<h3>${t('Welcome')}, ${esc(req.user.name)} - ${esc(co.name)} ${badge(statusOf(co), t)}</h3><div class="grid">
+${stat(n('SELECT count(*) n FROM customers WHERE company_id=?'), 'Total customers')}${stat(n("SELECT count(*) n FROM customers WHERE company_id=? AND status='active'"), 'Active')}${stat(n("SELECT count(*) n FROM customers WHERE company_id=? AND payment_status='unpaid'"), 'Unpaid')}${stat(n("SELECT count(*) n FROM users WHERE company_id=? AND role='employee'"), 'Employees')}</div>`, nav(req)));
+  });
+  const custFields = (t, v = {}) => `<div class="row">${field(t('Full name'), 'full_name', v.full_name, { req: true })}${field(t('Phone'), 'phone', v.phone)}${field(t('WhatsApp'), 'whatsapp', v.whatsapp)}${field(t('Email'), 'email', v.email, { type: 'email' })}${field(t('Address'), 'address', v.address)}${field(t('Location'), 'location', v.location)}
+${select(t('Account type'), 'account_type', v.account_type, [['individual', 'Individual'], ['business', 'Business']])}${select(t('Service type'), 'service_type', v.service_type, [['pppoe', 'PPPoE'], ['hotspot', 'Hotspot'], ['static', 'Static']])}${field(t('Package'), 'package', v.package)}${field(t('Username'), 'username', v.username)}
+${field(t('Subscription start'), 'sub_start', v.sub_start, { type: 'date' })}${field(t('Subscription ends'), 'sub_end', v.sub_end, { type: 'date' })}${select(t('Payment status'), 'payment_status', v.payment_status, [['unpaid', t('Unpaid')], ['paid', t('Paid')]])}${select(t('Status'), 'status', v.status, [['active', t('Active')], ['suspended', t('Suspended')]])}</div>${field(t('Notes'), 'notes', v.notes, { ta: true })}`;
+  const custValues = (b) => {
+    const d = (x) => (/^\d{4}-\d{2}-\d{2}$/.test(x || '') ? x : null);
+    return [clean(b.full_name), clean(b.phone, 40), clean(b.whatsapp, 40), clean(b.email, 200), clean(b.address), clean(b.location),
+      ['individual', 'business'].includes(b.account_type) ? b.account_type : 'individual', ['pppoe', 'hotspot', 'static'].includes(b.service_type) ? b.service_type : 'pppoe',
+      clean(b.package, 80), clean(b.username, 80), d(b.sub_start), d(b.sub_end), b.payment_status === 'paid' ? 'paid' : 'unpaid', b.status === 'suspended' ? 'suspended' : 'active', clean(b.notes, 1000)];
+  };
+  app.get('/app/customers', needCompany, need('customers.view'), (req, res) => {
+    const t = req.i.t, c = ctx(req), cid = req.user.company_id;
+    const s = clean(req.query.q, 100), st = clean(req.query.status, 20), pay = clean(req.query.pay, 20);
+    const page_ = Math.max(1, parseInt(req.query.page, 10) || 1), per = 20;
+    let where = 'company_id=? AND (full_name LIKE ? OR phone LIKE ? OR username LIKE ? OR code LIKE ?)';
+    const args = [cid, `%${s}%`, `%${s}%`, `%${s}%`, `%${s}%`];
+    if (['active', 'suspended'].includes(st)) { where += ' AND status=?'; args.push(st); }
+    if (['paid', 'unpaid'].includes(pay)) { where += ' AND payment_status=?'; args.push(pay); }
+    const total = q1(`SELECT count(*) n FROM customers WHERE ${where}`, ...args).n;
+    const rows = q(`SELECT * FROM customers WHERE ${where} ORDER BY id DESC LIMIT ? OFFSET ?`, ...args, per, (page_ - 1) * per);
+    const qs = (p) => `?q=${encodeURIComponent(s)}&status=${st}&pay=${pay}&page=${p}`;
+    res.send(page(c, 'Customers', `<div class="card"><form method="get" class="row"><div><input name="q" value="${esc(s)}" placeholder="${t('Search')}"></div>
+${select(t('Status'), 'status', st, [['', t('All')], ['active', t('Active')], ['suspended', t('Suspended')]])}${select(t('Payment status'), 'pay', pay, [['', t('All')], ['paid', t('Paid')], ['unpaid', t('Unpaid')]])}
+<div style="padding-top:22px"><button>${t('Search')}</button> ${can(req.user, 'customers.add') ? `<a class="btn sec" href="/app/customers/new">${t('Add')}</a>` : ''} ${can(req.user, 'customers.export') ? `<a class="btn sec" href="/app/customers.csv">${t('Export')}</a>` : ''}</div></form></div>
+<div class="card tbl"><table><tr><th>${t('Customer ID')}</th><th>${t('Full name')}</th><th>${t('Phone')}</th><th>${t('Package')}</th><th>${t('Status')}</th><th>${t('Payment status')}</th><th></th></tr>
+${rows.map((r) => `<tr><td>${esc(r.code)}</td><td>${esc(r.full_name)}</td><td>${esc(r.phone)}</td><td>${esc(r.package)}</td><td>${badge(r.status, t)}</td><td>${badge(r.payment_status, t)}</td><td><a href="/app/customers/${r.id}">${t('View')}</a></td></tr>`).join('') || `<tr><td colspan="7">${t('No results')}</td></tr>`}</table>
+<div class="pager">${page_ > 1 ? `<a href="${qs(page_ - 1)}">${t('Previous')}</a>` : ''}<span class="mut">${total} | ${page_}/${Math.max(1, Math.ceil(total / per))}</span>${page_ * per < total ? `<a href="${qs(page_ + 1)}">${t('Next')}</a>` : ''}</div></div>`, nav(req)));
+  });
+  app.get('/app/customers.csv', needCompany, need('customers.export'), (req, res) => {
+    const rows = q('SELECT code,full_name,phone,whatsapp,email,address,package,username,sub_start,sub_end,payment_status,status FROM customers WHERE company_id=? ORDER BY id', req.user.company_id);
+    const cell = (v) => { v = String(v ?? ''); if (/^[=+\-@\t\r]/.test(v)) v = "'" + v; return `"${v.replace(/"/g, '""')}"`; };
+    audit(req, 'customers_exported', `${rows.length} rows`);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="customers.csv"');
+    res.send('\ufeff' + ['code,full_name,phone,whatsapp,email,address,package,username,sub_start,sub_end,payment_status,status', ...rows.map((r) => Object.values(r).map(cell).join(','))].join('\n'));
+  });
+  app.get('/app/customers/new', needCompany, need('customers.add'), (req, res) => {
+    const t = req.i.t, c = ctx(req);
+    res.send(page(c, 'New customer', `<div class="card"><form method="post" action="/app/customers">${csrfField(c)}${custFields(t)}<p><button>${t('Save')}</button></p></form></div>`, nav(req)));
+  });
+  app.post('/app/customers', needCompany, need('customers.add'), (req, res) => {
+    const t = req.i.t, cid = req.user.company_id, v = custValues(req.body);
+    if (!v[0]) return go(res, '/app/customers/new', 'err', t('required'));
+    const last = q1('SELECT max(id) m FROM customers WHERE company_id=?', cid).m || 0;
+    let code = `C${String(last + 1).padStart(5, '0')}`;
+    while (q1('SELECT 1 x FROM customers WHERE company_id=? AND code=?', cid, code)) code += 'x';
+    const id = run(`INSERT INTO customers(company_id,code,full_name,phone,whatsapp,email,address,location,account_type,service_type,package,username,sub_start,sub_end,payment_status,status,notes) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, cid, code, ...v).lastInsertRowid;
+    audit(req, 'customer_created', `${code} ${v[0]}`);
+    go(res, `/app/customers/${id}`, 'ok', t('Created'));
+  });
+  const getCust = (req, res) => { const r = q1('SELECT * FROM customers WHERE id=? AND company_id=?', Number(req.params.id), req.user.company_id); if (!r) { deny(req, res, 404); return null; } return r; };
+  app.get('/app/customers/:id', needCompany, need('customers.view'), (req, res) => {
+    const r = getCust(req, res); if (!r) return;
+    const t = req.i.t, c = ctx(req);
+    const hist = q("SELECT * FROM audit_log WHERE company_id=? AND detail LIKE ? ORDER BY id DESC LIMIT 15", req.user.company_id, `${r.code} %`);
+    const editable = can(req.user, 'customers.edit');
+    res.send(page(c, r.full_name, `<div class="card"><h3>${esc(r.code)} - ${esc(r.full_name)} ${badge(r.status, t)}</h3>
+${editable ? `<form method="post" action="/app/customers/${r.id}/edit">${csrfField(c)}${custFields(t, r)}<p><button>${t('Save')}</button></p></form>` : `<table>${Object.entries(r).filter(([k]) => !['id', 'company_id'].includes(k)).map(([k, v]) => `<tr><th>${esc(k)}</th><td>${esc(v)}</td></tr>`).join('')}</table>`}
+${can(req.user, 'customers.delete') ? `<form method="post" action="/app/customers/${r.id}/delete" onsubmit="return confirm('${t('Delete')}?')">${csrfField(c)}<button class="bad">${t('Delete')}</button></form>` : ''}</div>
+<div class="card"><h3>${t('Recent activity')}</h3><table>${hist.map((a) => `<tr><td>${esc(a.ts)}</td><td>${esc(a.action)}</td></tr>`).join('') || `<tr><td>${t('No results')}</td></tr>`}</table></div>`, nav(req)));
+  });
+  app.post('/app/customers/:id/edit', needCompany, need('customers.edit'), (req, res) => {
+    const r = getCust(req, res); if (!r) return;
+    const v = custValues(req.body);
+    if (!v[0]) return go(res, `/app/customers/${r.id}`, 'err', req.i.t('required'));
+    run(`UPDATE customers SET full_name=?,phone=?,whatsapp=?,email=?,address=?,location=?,account_type=?,service_type=?,package=?,username=?,sub_start=?,sub_end=?,payment_status=?,status=?,notes=? WHERE id=? AND company_id=?`, ...v, r.id, req.user.company_id);
+    audit(req, 'customer_updated', `${r.code} ${v[0]}`);
+    go(res, `/app/customers/${r.id}`, 'ok', req.i.t('Saved'));
+  });
+  app.post('/app/customers/:id/delete', needCompany, need('customers.delete'), (req, res) => {
+    const r = getCust(req, res); if (!r) return;
+    run('DELETE FROM customers WHERE id=? AND company_id=?', r.id, req.user.company_id);
+    audit(req, 'customer_deleted', `${r.code} ${r.full_name}`);
+    go(res, '/app/customers', 'ok', req.i.t('Deleted'));
+  });
+
+  // ---- employees (company admin only)
+  const needAdmin = (req, res, next) => (req.user && req.user.role === 'company_admin' ? next() : req.user ? deny(req, res) : res.redirect(303, '/login'));
+  const permChecks = (t, sel = []) => `<div class="checks">${CUSTOMER_PERMS.map((p) => `<label><input type="checkbox" name="perm" value="${p}" ${sel.includes(p) ? 'checked' : ''}> ${t(p)}</label>`).join('')}</div>`;
+  const parsePerms = (b) => [].concat(b.perm || []).filter((p) => CUSTOMER_PERMS.includes(p));
+  app.get('/app/employees', needAdmin, (req, res) => {
+    const t = req.i.t, c = ctx(req);
+    const rows = q("SELECT * FROM users WHERE company_id=? AND role='employee' ORDER BY id", req.user.company_id);
+    res.send(page(c, 'Employees', `<div class="card"><a class="btn" href="/app/employees/new">${t('Add')}</a></div><div class="card tbl"><table><tr><th>${t('Name')}</th><th>${t('Username')}</th><th>${t('Role')}</th><th>${t('Status')}</th><th></th></tr>
+${rows.map((u) => `<tr><td>${esc(u.name)}</td><td>${esc(u.username)}</td><td>${esc(t(u.emp_role))}</td><td>${badge(u.status, t)}</td><td><a href="/app/employees/${u.id}">${t('Edit')}</a></td></tr>`).join('') || `<tr><td colspan="5">${t('No results')}</td></tr>`}</table></div>`, nav(req)));
+  });
+  app.get('/app/employees/new', needAdmin, (req, res) => {
+    const t = req.i.t, c = ctx(req);
+    res.send(page(c, 'New employee', `<div class="card"><form method="post" action="/app/employees">${csrfField(c)}<div class="row">${field(t('Name'), 'name', '', { req: true })}${field(t('Username'), 'username', '', { req: true })}${field(t('Email'), 'email', '', { type: 'email', req: true })}${field(t('Password'), 'password', '', { type: 'password', req: true })}
+${select(t('Role'), 'emp_role', 'Cashier', Object.keys(ROLE_PRESETS).map((r) => [r, t(r)]))}</div><label>${t('Permissions')} (${t('Role')} preset applies if none ticked)</label>${permChecks(t)}<p><button>${t('Save')}</button></p></form></div>`, nav(req)));
+  });
+  app.post('/app/employees', needAdmin, (req, res) => {
+    const t = req.i.t, b = req.body, cid = req.user.company_id;
+    const un = clean(b.username, 60).toLowerCase(), em = clean(b.email, 200).toLowerCase(), name = clean(b.name);
+    const role = ROLE_PRESETS[b.emp_role] ? b.emp_role : 'Read-only Employee';
+    if (!un || !em || !name) return go(res, '/app/employees/new', 'err', t('required'));
+    const prob = passwordProblem(String(b.password || ''));
+    if (prob) return go(res, '/app/employees/new', 'err', t(prob));
+    if (q1('SELECT 1 x FROM users WHERE lower(username)=? OR lower(email)=?', un, em)) return go(res, '/app/employees/new', 'err', t('duplicate'));
+    const perms = parsePerms(b), final = perms.length ? perms : ROLE_PRESETS[role];
+    const id = run(`INSERT INTO users(company_id,name,username,email,password_hash,role,emp_role,permissions) VALUES(?,?,?,?,?, 'employee',?,?)`, cid, name, un, em, hashPassword(b.password), role, JSON.stringify(final)).lastInsertRowid;
+    audit(req, 'employee_created', un);
+    go(res, `/app/employees/${id}`, 'ok', t('Created'));
+  });
+  const getEmp = (req, res) => { const u = q1("SELECT * FROM users WHERE id=? AND company_id=? AND role='employee'", Number(req.params.id), req.user.company_id); if (!u) { deny(req, res, 404); return null; } return u; };
+  app.get('/app/employees/:id', needAdmin, (req, res) => {
+    const u = getEmp(req, res); if (!u) return;
+    const t = req.i.t, c = ctx(req);
+    res.send(page(c, u.name, `<div class="card"><form method="post" action="/app/employees/${u.id}/edit">${csrfField(c)}<div class="row">${field(t('Name'), 'name', u.name, { req: true })}${select(t('Status'), 'status', u.status, [['active', t('Active')], ['suspended', t('Suspended')]])}
+${field(t('New password'), 'password', '', { type: 'password' })}${select(t('Role'), 'emp_role', u.emp_role, Object.keys(ROLE_PRESETS).map((r) => [r, t(r)]))}</div><label>${t('Permissions')}</label>${permChecks(t, JSON.parse(u.permissions))}<p><button>${t('Save')}</button></p></form>
+<form method="post" action="/app/employees/${u.id}/delete" onsubmit="return confirm('${t('Delete')}?')">${csrfField(c)}<button class="bad">${t('Delete')}</button></form></div>`, nav(req)));
+  });
+  app.post('/app/employees/:id/edit', needAdmin, (req, res) => {
+    const u = getEmp(req, res); if (!u) return;
+    const t = req.i.t, b = req.body, name = clean(b.name);
+    if (!name) return go(res, `/app/employees/${u.id}`, 'err', t('required'));
+    let hash = u.password_hash;
+    if (b.password) { const p = passwordProblem(String(b.password)); if (p) return go(res, `/app/employees/${u.id}`, 'err', t(p)); hash = hashPassword(b.password); }
+    const role = ROLE_PRESETS[b.emp_role] ? b.emp_role : u.emp_role;
+    run('UPDATE users SET name=?,status=?,password_hash=?,emp_role=?,permissions=? WHERE id=? AND company_id=?', name, b.status === 'suspended' ? 'suspended' : 'active', hash, role, JSON.stringify(parsePerms(b)), u.id, req.user.company_id);
+    if (b.status === 'suspended' || b.password) run('DELETE FROM sessions WHERE user_id=?', u.id);
+    audit(req, 'employee_updated', u.username);
+    go(res, `/app/employees/${u.id}`, 'ok', t('Saved'));
+  });
+  app.post('/app/employees/:id/delete', needAdmin, (req, res) => {
+    const u = getEmp(req, res); if (!u) return;
+    run('DELETE FROM users WHERE id=? AND company_id=?', u.id, req.user.company_id);
+    audit(req, 'employee_deleted', u.username);
+    go(res, '/app/employees', 'ok', req.i.t('Deleted'));
+  });
+
+  // ---- company settings & audit
+  app.get('/app/settings', needAdmin, (req, res) => {
+    const t = req.i.t, c = ctx(req), co = q1('SELECT * FROM companies WHERE id=?', req.user.company_id);
+    res.send(page(c, 'Settings', `<div class="card"><h3>${t('Company profile')}</h3><form method="post" action="/app/settings">${csrfField(c)}<div class="row">${field(t('Company name'), 'name', co.name, { req: true })}${field(t('Network name'), 'network_name', co.network_name)}${field(t('Owner name'), 'owner_name', co.owner_name)}${field(t('Phone'), 'phone', co.phone)}${field(t('WhatsApp'), 'whatsapp', co.whatsapp)}${field(t('Country'), 'country', co.country)}${field(t('City'), 'city', co.city)}${field(t('Address'), 'address', co.address)}</div><p><button>${t('Save')}</button></p></form></div>`, nav(req)));
+  });
+  app.post('/app/settings', needAdmin, (req, res) => {
+    const b = req.body, name = clean(b.name);
+    if (!name) return go(res, '/app/settings', 'err', req.i.t('required'));
+    run('UPDATE companies SET name=?,network_name=?,owner_name=?,phone=?,whatsapp=?,country=?,city=?,address=? WHERE id=?', name, clean(b.network_name), clean(b.owner_name), clean(b.phone, 40), clean(b.whatsapp, 40), clean(b.country, 40), clean(b.city, 80), clean(b.address, 300), req.user.company_id);
+    audit(req, 'company_settings_updated', name);
+    go(res, '/app/settings', 'ok', req.i.t('Saved'));
+  });
+  app.get('/app/audit', needCompany, need('audit.view'), (req, res) => {
+    const rows = q('SELECT a.*, u.username FROM audit_log a LEFT JOIN users u ON u.id=a.user_id WHERE a.company_id=? ORDER BY a.id DESC LIMIT 200', req.user.company_id);
+    res.send(page(ctx(req), 'Audit', `<div class="card tbl"><table><tr><th>Time</th><th>User</th><th>Action</th><th>Detail</th><th>IP</th></tr>${rows.map((a) => `<tr><td>${esc(a.ts)}</td><td>${esc(a.username || '-')}</td><td>${esc(a.action)}</td><td>${esc(a.detail)}</td><td>${esc(a.ip)}</td></tr>`).join('')}</table></div>`, nav(req)));
+  });
+
+  app.use((req, res) => (req.user ? deny(req, res, 404) : res.status(404).send('Not found')));
+  app.use((err, req, res, next) => { console.error(err); res.status(500).send('Server error'); });
+  return app;
+}
+module.exports = { createApp, ROLE_PRESETS };
