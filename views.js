@@ -24,8 +24,16 @@ button,.btn{background:var(--p);color:#fff;border:0;border-radius:8px;padding:8p
 form.loading .spin{display:inline-block}@keyframes s{to{transform:rotate(360deg)}}.mut{color:var(--mut)}.pager{display:flex;gap:8px;margin-top:10px;align-items:center}
 .checks label{display:inline-flex;gap:6px;align-items:center;margin:4px 12px 4px 0;color:var(--tx)}.checks input{width:auto}
   .row2{display:grid;grid-template-columns:1fr 1fr;gap:0 18px}@media(max-width:700px){.row2{grid-template-columns:1fr}}
-@media(max-width:600px){header{padding:8px 10px}}`;
+@media(max-width:600px){header{padding:8px 10px}}
+.shell{display:grid;grid-template-columns:minmax(0,1fr) 250px;gap:18px;max-width:1360px;margin:20px auto;padding:0 14px;direction:ltr;align-items:start}
+.shell>*{direction:var(--dir)}.shell main{margin:0;padding:0;max-width:none;grid-column:1;grid-row:1;min-width:0}
+.side{grid-column:2;grid-row:1;position:sticky;top:14px;background:#fff;border:1px solid var(--bd);border-radius:14px;padding:12px;font-size:15px}
+.side a{display:block;padding:11px 14px;margin:0 0 9px;border-radius:10px;background:linear-gradient(#fff,#f1f5f9);border:1px solid #cbd5e1;box-shadow:0 2px 0 #cbd5e1,0 4px 10px rgba(15,23,42,.08);color:var(--tx);font-size:15px;font-weight:500;line-height:1.3;transition:transform .08s,box-shadow .08s}
+.side a:hover{background:#eff6ff;border-color:var(--p);color:var(--p)}.side a:active{transform:translateY(2px);box-shadow:0 0 0 #cbd5e1}
+.side a.on{background:var(--p);border-color:var(--p);color:#fff;box-shadow:0 2px 0 #1d4ed8,0 4px 10px rgba(37,99,235,.35)}.side a:last-child{margin-bottom:0}
+@media(max-width:800px){.shell{grid-template-columns:1fr}.side{grid-column:1;grid-row:1;position:static}.shell main{grid-row:2;grid-column:1}}`;
 const js = `document.addEventListener('submit',e=>{e.target.classList&&e.target.classList.add('loading')});
+(function(){var s=document.getElementById('side');if(!s)return;var p=location.pathname,best=null;s.querySelectorAll('a').forEach(function(a){var h=a.getAttribute('href');if((p===h||(h.length>5&&p.indexOf(h)===0))&&(!best||h.length>best.getAttribute('href').length))best=a});if(best)best.className='on'})();
 function tp(id,b){var i=document.getElementById(id);i.type=i.type==='password'?'text':'password'}`;
 
 function page(ctx, title, body, nav = '') {
@@ -34,10 +42,10 @@ function page(ctx, title, body, nav = '') {
   const other = i.lang === 'ar' ? 'en' : 'ar';
   return `<!doctype html><html lang="${i.lang}" dir="${i.rtl ? 'rtl' : 'ltr'}"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)} - MikroCloud</title><style>${css}</style></head><body>
-<header><span class="brand">MikroCloud</span>${nav}<span class="sp"></span>
+<header><span class="brand">MikroCloud</span>${user && nav ? '' : nav}<span class="sp"></span>
 <a href="/lang/${other}?back=${encodeURIComponent(path || '/')}">${other === 'ar' ? 'العربية' : 'English'}</a>
 ${user ? `<a href="/account">${esc(user.name)}</a><form class="inline" method="post" action="/logout"><input type="hidden" name="_csrf" value="${esc(csrf)}"><button class="sec">${t('Logout')}</button></form>` : ''}</header>
-<main>${flash ? `<div class="flash ${flash.type}">${esc(flash.msg)}</div>` : ''}${body}</main><script>${js}</script></body></html>`;
+${user && nav ? `<div class="shell" style="--dir:${i.rtl ? 'rtl' : 'ltr'}">` : ''}<main>${flash ? `<div class="flash ${flash.type}">${esc(flash.msg)}</div>` : ''}${body}</main>${user && nav ? `<aside class="side" id="side">${nav}</aside></div>` : ''}<script>${js}</script></body></html>`;
 }
 const csrfField = (ctx) => `<input type="hidden" name="_csrf" value="${esc(ctx.csrf)}">`;
 const infoGrid = (items) => `<div class="info">${items.map(([l, x]) => `<div><small>${esc(l)}</small><strong>${x === undefined || x === null || x === '' ? '-' : x}</strong></div>`).join('')}</div>`;
