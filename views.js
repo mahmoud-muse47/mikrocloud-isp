@@ -22,6 +22,7 @@ button,.btn{background:var(--p);color:#fff;border:0;border-radius:8px;padding:8p
 .spin{display:none;width:14px;height:14px;border:2px solid #fff;border-top-color:transparent;border-radius:50%;animation:s .7s linear infinite;vertical-align:middle;margin-inline-start:6px}
 form.loading .spin{display:inline-block}@keyframes s{to{transform:rotate(360deg)}}.mut{color:var(--mut)}.pager{display:flex;gap:8px;margin-top:10px;align-items:center}
 .checks label{display:inline-flex;gap:6px;align-items:center;margin:4px 12px 4px 0;color:var(--tx)}.checks input{width:auto}
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:0 18px}@media(max-width:700px){.row2{grid-template-columns:1fr}}
 @media(max-width:600px){header{padding:8px 10px}}`;
 const js = `document.addEventListener('submit',e=>{e.target.classList&&e.target.classList.add('loading')});
 function tp(id,b){var i=document.getElementById(id);i.type=i.type==='password'?'text':'password'}`;

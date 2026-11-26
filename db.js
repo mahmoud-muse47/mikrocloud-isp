@@ -49,7 +49,56 @@ CREATE TABLE IF NOT EXISTS audit_log(
   id INTEGER PRIMARY KEY AUTOINCREMENT, company_id INTEGER, user_id INTEGER,
   action TEXT NOT NULL, detail TEXT DEFAULT '', ip TEXT, ts TEXT NOT NULL DEFAULT (datetime('now')));
 CREATE INDEX IF NOT EXISTS idx_audit_company ON audit_log(company_id, id);
+
+CREATE TABLE IF NOT EXISTS plans(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT NOT NULL UNIQUE,
+  name_en TEXT NOT NULL, name_ar TEXT NOT NULL, desc_en TEXT DEFAULT '', desc_ar TEXT DEFAULT '', icon TEXT DEFAULT '',
+  active INTEGER NOT NULL DEFAULT 1, archived INTEGER NOT NULL DEFAULT 0, sort_order INTEGER NOT NULL DEFAULT 0, recommended INTEGER NOT NULL DEFAULT 0,
+  currency TEXT NOT NULL DEFAULT 'EGP',
+  price_monthly REAL NOT NULL DEFAULT 0, price_quarterly REAL NOT NULL DEFAULT 0, price_semiannual REAL NOT NULL DEFAULT 0, price_annual REAL NOT NULL DEFAULT 0,
+  price_custom REAL NOT NULL DEFAULT 0, custom_days INTEGER NOT NULL DEFAULT 0, promo_price REAL NOT NULL DEFAULT 0, discount_pct REAL NOT NULL DEFAULT 0,
+  trial_eligible INTEGER NOT NULL DEFAULT 0, trial_days INTEGER NOT NULL DEFAULT 0, setup_fee REAL NOT NULL DEFAULT 0,
+  max_admins INTEGER NOT NULL DEFAULT 1, max_employees INTEGER NOT NULL DEFAULT 3, max_subscribers INTEGER NOT NULL DEFAULT 500,
+  max_hotspot INTEGER NOT NULL DEFAULT -1, max_pppoe INTEGER NOT NULL DEFAULT -1, max_routers INTEGER NOT NULL DEFAULT 2, max_aps INTEGER NOT NULL DEFAULT 5,
+  max_devices INTEGER NOT NULL DEFAULT 10, max_vouchers_batch INTEGER NOT NULL DEFAULT 100, max_vouchers_month INTEGER NOT NULL DEFAULT 1000,
+  max_storage_mb INTEGER NOT NULL DEFAULT 500, max_api_ops INTEGER NOT NULL DEFAULT -1,
+  modules TEXT NOT NULL DEFAULT 'customers,network');
+CREATE TABLE IF NOT EXISTS invoices(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL, plan_code TEXT NOT NULL, plan_name_en TEXT DEFAULT '', plan_name_ar TEXT DEFAULT '', period TEXT DEFAULT '',
+  amount REAL NOT NULL DEFAULT 0, credit REAL NOT NULL DEFAULT 0, currency TEXT NOT NULL DEFAULT 'EGP', status TEXT NOT NULL DEFAULT 'unpaid',
+  note TEXT DEFAULT '', created_at TEXT NOT NULL DEFAULT (datetime('now')), paid_at TEXT);
+CREATE TABLE IF NOT EXISTS plan_requests(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  plan_id INTEGER NOT NULL, period TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', requested_by INTEGER,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')), decided_at TEXT);
+CREATE TABLE IF NOT EXISTS devices(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  name TEXT NOT NULL, category TEXT NOT NULL, manufacturer TEXT DEFAULT '', model TEXT DEFAULT '', mac TEXT DEFAULT '', ip TEXT DEFAULT '',
+  mgmt_ip TEXT DEFAULT '', serial TEXT DEFAULT '', firmware TEXT DEFAULT '', location TEXT DEFAULT '', building TEXT DEFAULT '', floor TEXT DEFAULT '',
+  area TEXT DEFAULT '', parent_id INTEGER, grp TEXT DEFAULT '', protocol TEXT DEFAULT 'manual', notes TEXT DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'unknown', last_check TEXT, last_ok TEXT, last_fail TEXT, fails INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')));
+CREATE INDEX IF NOT EXISTS idx_devices_company ON devices(company_id);
 `);
+
+  for (const [col, def] of [['billing_period', "TEXT DEFAULT 'monthly'"], ['price_paid', 'REAL DEFAULT 0'], ['currency', "TEXT DEFAULT 'EGP'"], ['sub_start', 'TEXT'], ['limit_overrides', "TEXT DEFAULT '{}'"], ['logo', "TEXT DEFAULT ''"]]) {
+    if (!db.prepare("SELECT 1 x FROM pragma_table_info('companies') WHERE name=?").get(col)) db.exec(`ALTER TABLE companies ADD COLUMN ${col} ${def}`);
+  }
+  for (const [col, def] of [['hb_token', "TEXT DEFAULT ''"], ['hb_interval', 'INTEGER DEFAULT 5'], ['cred_user', "TEXT DEFAULT ''"], ['cred_enc', "TEXT DEFAULT ''"], ['link_verified', 'INTEGER DEFAULT 0'], ['icon', "TEXT DEFAULT ''"]]) {
+    if (!db.prepare("SELECT 1 x FROM pragma_table_info('devices') WHERE name=?").get(col)) db.exec(`ALTER TABLE devices ADD COLUMN ${col} ${def}`);
+  }
+  db.exec(`CREATE TABLE IF NOT EXISTS device_alerts(id INTEGER PRIMARY KEY AUTOINCREMENT, company_id INTEGER NOT NULL, device_id INTEGER, severity TEXT NOT NULL, kind TEXT NOT NULL, msg TEXT DEFAULT '', ack INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (datetime('now')));
+    CREATE TABLE IF NOT EXISTS device_groups(id INTEGER PRIMARY KEY AUTOINCREMENT, company_id INTEGER NOT NULL, name TEXT NOT NULL, UNIQUE(company_id,name));
+    CREATE TABLE IF NOT EXISTS app_settings(k TEXT PRIMARY KEY, v TEXT NOT NULL);`);
+  if (!db.prepare('SELECT 1 x FROM plans LIMIT 1').get()) {
+    const ins = db.prepare(`INSERT INTO plans(code,name_en,name_ar,desc_en,desc_ar,sort_order,recommended,trial_eligible,trial_days,price_monthly,price_quarterly,price_semiannual,price_annual,
+      max_admins,max_employees,max_subscribers,max_routers,max_aps,max_devices,modules) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+    ins.run('trial', 'Trial', 'تجريبي', 'Free trial to test the platform', 'فترة تجريبية مجانية لتجربة المنصة', 1, 0, 1, 14, 0, 0, 0, 0, 1, 1, 50, 1, 2, 4, 'customers,network');
+    ins.run('basic', 'Basic', 'أساسي', 'For small networks', 'للشبكات الصغيرة', 2, 0, 0, 0, 300, 850, 1600, 3000, 1, 3, 500, 2, 5, 10, 'customers,network');
+    ins.run('pro', 'Professional', 'احترافي', 'For growing ISPs', 'لشركات الإنترنت المتنامية', 3, 1, 0, 0, 700, 2000, 3800, 7000, 3, 10, 2500, 10, 30, 60, 'customers,network,vouchers,reports');
+    ins.run('enterprise', 'Enterprise', 'مؤسسات', 'Custom limits for large operators', 'حدود مخصصة للمشغلين الكبار', 4, 0, 0, 0, 2000, 5700, 10800, 20000, 10, 50, -1, -1, -1, -1, 'customers,network,vouchers,reports,api');
+  }
   return db;
 }
 
