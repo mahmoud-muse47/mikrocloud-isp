@@ -8,4 +8,10 @@ module.exports = {
   'Invoices issued': 'الفواتير الصادرة', 'Voucher sales': 'مبيعات الكروت', 'Cards sold': 'كروت مباعة', 'New customers': 'مشتركون جدد',
   'Export CSV': 'تصدير CSV', 'Reports module is not in your plan': 'وحدة التقارير غير متاحة في باقتك', 'Package': 'الباقة', 'Method': 'الطريقة',
   'Amount': 'المبلغ', 'Count': 'العدد', 'Pending payment approvals': 'مدفوعات بانتظار الموافقة', 'View all': 'عرض الكل', 'Customer': 'المشترك', 'Ends': 'ينتهي',
+  'Two-factor authentication': 'المصادقة الثنائية', 'Two-factor authentication is on': 'المصادقة الثنائية مفعّلة', 'Authentication code': 'رمز المصادقة', 'Invalid code': 'رمز غير صحيح',
+  'Set up two-factor authentication': 'إعداد المصادقة الثنائية', 'Turn off two-factor authentication': 'إيقاف المصادقة الثنائية', 'Confirm and turn on': 'تأكيد وتفعيل',
+  'Scan the QR code with an authenticator app (Google Authenticator, Microsoft Authenticator, Authy), then enter the 6-digit code.': 'امسح رمز QR بتطبيق مصادقة (Google Authenticator أو Microsoft Authenticator أو Authy) ثم أدخل الرمز المكوّن من 6 أرقام.',
+  'Add a second step at sign-in using an authenticator app. Optional.': 'أضف خطوة ثانية عند الدخول باستخدام تطبيق مصادقة. اختياري.',
+  'Save these recovery codes now. Each works once if you lose your phone. They will not be shown again.': 'احفظ رموز الاسترداد هذه الآن. كل رمز يعمل مرة واحدة إذا فقدت هاتفك. لن تظهر مرة أخرى.',
+  'Done': 'تم', 'Session expired, sign in again': 'انتهت الجلسة، سجّل الدخول من جديد',
 };

@@ -9,6 +9,7 @@ const { init: paymentsInit } = require('./payments');
 const { init: financeInit } = require('./finance');
 const { init: vouchersInit } = require('./vouchers');
 const { init: reportsInit } = require('./reports');
+const TF = require('./twofa');
 const { infoGrid, esc, page, csrfField, badge, field, select } = V;
 
 const SESSION_TTL = 8 * 3600e3, REMEMBER_TTL = 30 * 24 * 3600e3;
@@ -107,6 +108,7 @@ function createApp(db, opts = {}) {
   paymentsInit({ app, db, q, q1, run, audit, ctx, go, deny, needSuper, needAdmin, nav: (req) => nav(req) });
   const FIN = financeInit({ app, db, q, q1, run, audit, ctx, go, deny, needAdmin, nav: (req) => nav(req) });
   vouchersInit({ app, db, q, q1, run, audit, ctx, go, deny, needAdmin, nav: (req) => nav(req), P });
+  TF.init({ app, q1, run, audit, ctx, go, needLogin, verifyPassword, nav: (req) => nav(req) });
   const RPT = reportsInit({ app, q, q1, ctx, needAdmin, deny, nav: (req) => nav(req), P });
   const D = devicesInit({ app, db, q, q1, run, audit, ctx, go, deny, needAdmin, nav: (req) => nav(req) }, P);
 
@@ -143,17 +145,42 @@ function createApp(db, opts = {}) {
       const c = q1('SELECT status FROM companies WHERE id=?', u.company_id);
       if (!c || c.status === 'suspended') { log(0, 'company_suspended'); return fail('Company is suspended', 403); }
     }
+    if (u.totp_on) {
+      const pt = crypto.randomBytes(24).toString('hex');
+      pend2fa.set(pt, { uid: u.id, remember: !!req.body.remember, exp: Date.now() + 5 * 60e3, tries: 0 });
+      res.append('Set-Cookie', `p2=${pt}; HttpOnly; SameSite=Lax; Path=/; Max-Age=300${opts.secureCookies ? '; Secure' : ''}`);
+      log(1, 'password_ok_2fa_pending');
+      return res.send(V.login2fa(ctx(req), ''));
+    }
     run('UPDATE users SET failed_attempts=0, locked_until=0, last_login_at=?, last_login_ip=? WHERE id=?', nowIso(), req.ip, u.id);
     log(1, 'ok');
+    finishLogin(req, res, u, req.body.remember);
+  });
+  const pend2fa = new Map();
+  app.post('/login/2fa', (req, res) => {
+    const t = req.i.t, m = /(?:^|;\s*)p2=([0-9a-f]+)/.exec(req.headers.cookie || ''), p = m && pend2fa.get(m[1]);
+    if (!p || p.exp < Date.now()) { if (m) pend2fa.delete(m[1]); return res.status(401).send(V.login(ctx(req), t('Session expired, sign in again'))); }
+    const u = q1('SELECT * FROM users WHERE id=?', p.uid);
+    const ok = u && u.status === 'active' && (TF.verifyTotp(u.totp_secret, req.body.code) || TF.useRecovery(q1, run, u, req.body.code));
+    if (!ok) {
+      if (++p.tries >= 5) { pend2fa.delete(m[1]); run('INSERT INTO login_history(user_id,identifier,success,reason,ip) VALUES(?,?,?,?,?)', p.uid, u ? u.username : '', 0, '2fa_locked', req.ip); return res.status(401).send(V.login(ctx(req), t('Too many attempts'))); }
+      return res.status(401).send(V.login2fa(ctx(req), t('Invalid code')));
+    }
+    pend2fa.delete(m[1]);
+    run('UPDATE users SET failed_attempts=0, locked_until=0, last_login_at=?, last_login_ip=? WHERE id=?', nowIso(), req.ip, u.id);
+    run('INSERT INTO login_history(user_id,identifier,success,reason,ip) VALUES(?,?,?,?,?)', u.id, u.username, 1, 'ok_2fa', req.ip);
+    finishLogin(req, res, u, p.remember);
+  });
+  function finishLogin(req, res, u, remember) {
     const token = crypto.randomBytes(32).toString('hex'), csrf = crypto.randomBytes(16).toString('hex');
-    const ttl = req.body.remember ? REMEMBER_TTL : SESSION_TTL;
+    const ttl = remember ? REMEMBER_TTL : SESSION_TTL;
     run('INSERT INTO sessions(token_hash,user_id,csrf,ip,ua,created_at,last_seen,expires_at) VALUES(?,?,?,?,?,?,?,?)',
       sha(token), u.id, csrf, req.ip, clean(req.headers['user-agent'], 200), Date.now(), Date.now(), Date.now() + ttl);
     res.append('Set-Cookie', `sid=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${Math.floor(ttl / 1000)}${opts.secureCookies ? '; Secure' : ''}`);
     req.user = u;
     audit(req, 'login', '', u.company_id);
     res.redirect(303, home(u));
-  });
+  }
   app.post('/logout', needLogin, (req, res) => {
     audit(req, 'logout');
     run('DELETE FROM sessions WHERE token_hash=?', req.session.token_hash);
@@ -191,7 +218,7 @@ function createApp(db, opts = {}) {
     res.send(page(c, 'Account', `<div class="card"><h3>${t('Change password')}</h3><form method="post" action="/account/password">${csrfField(c)}<div class="row">
 ${field(t('Current password'), 'current', '', { type: 'password', req: true })}${field(t('New password'), 'password', '', { type: 'password', req: true })}${field(t('Confirm new password'), 'confirm', '', { type: 'password', req: true })}</div><p><button>${t('Save')}</button></p></form></div>
 <div class="card"><h3>${t('Active sessions')}</h3><div class="tbl"><table><tr><th>IP</th><th>Device</th><th>Last</th><th></th></tr>${sessions.map((s) => `<tr><td>${esc(s.ip)}</td><td>${esc(s.ua)}</td><td>${new Date(s.last_seen).toISOString().slice(0, 19).replace('T', ' ')}</td><td>${s.token_hash === req.session.token_hash ? '&#9679;' : ''}</td></tr>`).join('')}</table></div>
-<form method="post" action="/account/logout-others">${csrfField(c)}<p><button class="sec">${t('Logout other sessions')}</button></p></form></div>
+<p><a class="btn sec" href="/account/2fa">${t('Two-factor authentication')}</a></p><form method="post" action="/account/logout-others">${csrfField(c)}<p><button class="sec">${t('Logout other sessions')}</button></p></form></div>
 <div class="card"><h3>${t('Login history')}</h3><div class="tbl"><table><tr><th>Time</th><th>IP</th><th>Result</th></tr>${hist.map((h) => `<tr><td>${esc(h.ts)}</td><td>${esc(h.ip)}</td><td>${h.success ? 'OK' : esc(h.reason)}</td></tr>`).join('')}</table></div></div>`, nav(req)));
   });
   app.post('/account/password', needLogin, (req, res) => {

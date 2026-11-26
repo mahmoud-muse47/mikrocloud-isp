@@ -89,6 +89,7 @@ CREATE INDEX IF NOT EXISTS idx_devices_company ON devices(company_id);
   for (const [col, def] of [['billing_period', "TEXT DEFAULT 'monthly'"], ['price_paid', 'REAL DEFAULT 0'], ['currency', "TEXT DEFAULT 'EGP'"], ['sub_start', 'TEXT'], ['limit_overrides', "TEXT DEFAULT '{}'"], ['logo', "TEXT DEFAULT ''"], ['legal_name', "TEXT DEFAULT ''"], ['phone2', "TEXT DEFAULT ''"], ['website', "TEXT DEFAULT ''"], ['tax_no', "TEXT DEFAULT ''"], ['description', "TEXT DEFAULT ''"], ['stamp', "TEXT DEFAULT ''"], ['brand_color', "TEXT DEFAULT '#2563eb'"], ['brand_color2', "TEXT DEFAULT '#0f172a'"], ['invoice_footer', "TEXT DEFAULT ''"], ['support_info', "TEXT DEFAULT ''"], ['logo_h', 'INTEGER DEFAULT 48'], ['suspended_until', 'TEXT']]) {
     if (!db.hasCol('companies', col)) db.exec(`ALTER TABLE companies ADD COLUMN ${col} ${def}`);
   }
+  if (!db.hasCol('users', 'totp_on')) { db.exec('ALTER TABLE users ADD COLUMN totp_on INTEGER NOT NULL DEFAULT 0'); db.exec("ALTER TABLE users ADD COLUMN totp_secret TEXT NOT NULL DEFAULT ''"); db.exec("ALTER TABLE users ADD COLUMN totp_recovery TEXT NOT NULL DEFAULT ''"); }
   if (!db.hasCol('customers', 'package_id')) db.exec('ALTER TABLE customers ADD COLUMN package_id INTEGER');
   for (const [col, def] of [['hb_token', "TEXT DEFAULT ''"], ['hb_interval', 'INTEGER DEFAULT 5'], ['cred_user', "TEXT DEFAULT ''"], ['cred_enc', "TEXT DEFAULT ''"], ['link_verified', 'INTEGER DEFAULT 0'], ['icon', "TEXT DEFAULT ''"]]) {
     if (!db.hasCol('devices', col)) db.exec(`ALTER TABLE devices ADD COLUMN ${col} ${def}`);

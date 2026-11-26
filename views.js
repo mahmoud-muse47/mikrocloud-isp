@@ -14,7 +14,7 @@ input,select,textarea{width:100%;padding:9px 10px;border:1px solid var(--bd);bor
 button,.btn{background:var(--p);color:#fff;border:0;border-radius:8px;padding:8px 14px;font:inherit;cursor:pointer;display:inline-block}
 .btn.sec,button.sec{background:#e2e8f0;color:var(--tx)}button.bad{background:var(--bad)}button.ok{background:var(--ok)}
 .row{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:0 14px}.flash{padding:10px 14px;border-radius:8px;margin-bottom:12px}
-.flash.warn{background:#fef3c7;color:#92400e}.flash.err{background:#fee2e2;color:#991b1b}.flash.ok{background:#dcfce7;color:#166534}.badge{padding:2px 8px;border-radius:99px;font-size:12px;background:#e2e8f0}
+.flash a{color:inherit;text-decoration:underline}.flash.warn{background:#fef3c7;color:#92400e}.flash.err{background:#fee2e2;color:#991b1b}.flash.ok{background:#dcfce7;color:#166534}.badge{padding:2px 8px;border-radius:99px;font-size:12px;background:#e2e8f0}
 .badge.active,.badge.paid{background:#dcfce7;color:#166534}.badge.suspended,.badge.expired,.badge.unpaid{background:#fee2e2;color:#991b1b}.badge.trial{background:#fef3c7;color:#92400e}
 .login{min-height:100vh;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#0f172a,#1e3a8a)}
 .login .box{background:#fff;border-radius:16px;padding:30px;width:min(400px,92vw);box-shadow:0 20px 50px rgba(0,0,0,.35)}
@@ -60,6 +60,13 @@ function field(label, name, val = '', opts = {}) {
 function select(label, name, val, options) {
   return `<div><label>${esc(label)}</label><select name="${name}">${options.map(([v, l]) => `<option value="${esc(v)}" ${String(v) === String(val) ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></div>`;
 }
+function login2fa(ctx, err) {
+  const t = ctx.i.t;
+  return `<!doctype html><html lang="${ctx.i.lang}" dir="${ctx.i.rtl ? 'rtl' : 'ltr'}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MikroCloud</title><style>${css}</style></head>
+<body class="login"><div class="box"><div class="logo">M</div><h2 style="text-align:center;margin:4px 0 18px">${t('Two-factor authentication')}</h2>
+${err ? `<div class="flash err">${esc(err)}</div>` : ''}<form method="post" action="/login/2fa">${csrfField(ctx)}
+<label>${t('Authentication code')}</label><input name="code" required autofocus autocomplete="one-time-code" inputmode="numeric"><button style="width:100%;margin-top:14px">${t('Sign in')}</button></form></div></body></html>`;
+}
 function login(ctx, err) {
   const t = ctx.i.t;
   const other = ctx.i.lang === 'ar' ? 'en' : 'ar';
@@ -73,4 +80,4 @@ ${err ? `<div class="flash err">${esc(err)}</div>` : ''}
 <p style="margin:14px 0 0"><button style="width:100%">${t('Sign in')}<span class="spin"></span></button></p></form>
 <p style="text-align:center;margin-top:14px"><a href="/lang/${other}?back=/login">${other === 'ar' ? 'العربية' : 'English'}</a></p></div><script>${js}</script></body></html>`;
 }
-module.exports = { infoGrid, esc, page, csrfField, badge, field, select, login };
+module.exports = { infoGrid, esc, page, csrfField, badge, field, select, login, login2fa };
