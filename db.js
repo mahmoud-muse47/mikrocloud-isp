@@ -86,7 +86,7 @@ CREATE TABLE IF NOT EXISTS devices(
 CREATE INDEX IF NOT EXISTS idx_devices_company ON devices(company_id);
 `);
 
-  for (const [col, def] of [['billing_period', "TEXT DEFAULT 'monthly'"], ['price_paid', 'REAL DEFAULT 0'], ['currency', "TEXT DEFAULT 'EGP'"], ['sub_start', 'TEXT'], ['limit_overrides', "TEXT DEFAULT '{}'"], ['logo', "TEXT DEFAULT ''"]]) {
+  for (const [col, def] of [['billing_period', "TEXT DEFAULT 'monthly'"], ['price_paid', 'REAL DEFAULT 0'], ['currency', "TEXT DEFAULT 'EGP'"], ['sub_start', 'TEXT'], ['limit_overrides', "TEXT DEFAULT '{}'"], ['logo', "TEXT DEFAULT ''"], ['legal_name', "TEXT DEFAULT ''"], ['phone2', "TEXT DEFAULT ''"], ['website', "TEXT DEFAULT ''"], ['tax_no', "TEXT DEFAULT ''"], ['description', "TEXT DEFAULT ''"], ['stamp', "TEXT DEFAULT ''"], ['brand_color', "TEXT DEFAULT '#2563eb'"], ['brand_color2', "TEXT DEFAULT '#0f172a'"], ['invoice_footer', "TEXT DEFAULT ''"], ['support_info', "TEXT DEFAULT ''"], ['logo_h', 'INTEGER DEFAULT 48'], ['suspended_until', 'TEXT']]) {
     if (!db.hasCol('companies', col)) db.exec(`ALTER TABLE companies ADD COLUMN ${col} ${def}`);
   }
   for (const [col, def] of [['hb_token', "TEXT DEFAULT ''"], ['hb_interval', 'INTEGER DEFAULT 5'], ['cred_user', "TEXT DEFAULT ''"], ['cred_enc', "TEXT DEFAULT ''"], ['link_verified', 'INTEGER DEFAULT 0'], ['icon', "TEXT DEFAULT ''"]]) {
@@ -94,6 +94,9 @@ CREATE INDEX IF NOT EXISTS idx_devices_company ON devices(company_id);
   }
   db.exec(`CREATE TABLE IF NOT EXISTS device_alerts(id INTEGER PRIMARY KEY AUTOINCREMENT, company_id INTEGER NOT NULL, device_id INTEGER, severity TEXT NOT NULL, kind TEXT NOT NULL, msg TEXT DEFAULT '', ack INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (datetime('now')));
     CREATE TABLE IF NOT EXISTS device_groups(id INTEGER PRIMARY KEY AUTOINCREMENT, company_id INTEGER NOT NULL, name TEXT NOT NULL, UNIQUE(company_id,name));
+    CREATE TABLE IF NOT EXISTS payment_methods(id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT NOT NULL, name_en TEXT DEFAULT '', name_ar TEXT DEFAULT '', desc_en TEXT DEFAULT '', desc_ar TEXT DEFAULT '', instr_en TEXT DEFAULT '', instr_ar TEXT DEFAULT '', account_info TEXT DEFAULT '', currency TEXT NOT NULL DEFAULT 'EGP', min_amount REAL NOT NULL DEFAULT 0, max_amount REAL NOT NULL DEFAULT 0, fee_pct REAL NOT NULL DEFAULT 0, fee_fixed REAL NOT NULL DEFAULT 0, require_ref INTEGER NOT NULL DEFAULT 1, require_proof INTEGER NOT NULL DEFAULT 0, sort_order INTEGER NOT NULL DEFAULT 0, enabled INTEGER NOT NULL DEFAULT 0, logo TEXT DEFAULT '', created_at TEXT NOT NULL DEFAULT (datetime('now')));
+    CREATE TABLE IF NOT EXISTS payments(id INTEGER PRIMARY KEY AUTOINCREMENT, invoice_id INTEGER NOT NULL REFERENCES invoices(id), company_id INTEGER NOT NULL, method_id INTEGER, method_name TEXT DEFAULT '', amount REAL NOT NULL, fee REAL NOT NULL DEFAULT 0, currency TEXT NOT NULL DEFAULT 'EGP', reference TEXT DEFAULT '', proof TEXT DEFAULT '', status TEXT NOT NULL DEFAULT 'pending', note TEXT DEFAULT '', created_at TEXT NOT NULL DEFAULT (datetime('now')), decided_at TEXT, decided_by INTEGER);
+    CREATE TABLE IF NOT EXISTS deleted_companies(id INTEGER PRIMARY KEY AUTOINCREMENT, company_id INTEGER, name TEXT NOT NULL, deleted_at TEXT NOT NULL DEFAULT (datetime('now')), deleted_by TEXT DEFAULT '', snapshot TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS app_settings(k TEXT PRIMARY KEY, v TEXT NOT NULL);`);
   if (!db.prepare('SELECT 1 x FROM plans LIMIT 1').get()) {
     const ins = db.prepare(`INSERT INTO plans(code,name_en,name_ar,desc_en,desc_ar,sort_order,recommended,trial_eligible,trial_days,price_monthly,price_quarterly,price_semiannual,price_annual,

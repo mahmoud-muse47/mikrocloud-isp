@@ -5,6 +5,7 @@ const { make } = require('./i18n');
 const V = require('./views');
 const { init: plansInit } = require('./plans');
 const { init: devicesInit } = require('./devices');
+const { init: paymentsInit } = require('./payments');
 const { esc, page, csrfField, badge, field, select } = V;
 
 const SESSION_TTL = 8 * 3600e3, REMEMBER_TTL = 30 * 24 * 3600e3;
@@ -38,7 +39,17 @@ function createApp(db, opts = {}) {
       companyId !== undefined ? companyId : (req.user ? req.user.company_id : null), req.user ? req.user.id : null, action, detail, req.ip);
 
   // ---- context: language, session, csrf
+  let lastReact = 0;
+  const reactivate = () => {
+    const today = new Date().toISOString().slice(0, 10);
+    for (const co of q("SELECT id,name,plan FROM companies WHERE status='suspended' AND suspended_until IS NOT NULL AND suspended_until<=?", today)) {
+      run("UPDATE companies SET status=?, suspended_until=NULL WHERE id=? AND status='suspended'", co.plan === 'trial' ? 'trial' : 'active', co.id);
+      run("INSERT INTO audit_log(company_id,user_id,action,detail) VALUES(?,?,?,?)", co.id, null, 'company_auto_reactivated', co.name);
+    }
+  };
+  setInterval(() => { try { reactivate(); } catch (e) { /* retried on next request */ } }, 10 * 60 * 1000).unref();
   app.use((req, res, next) => {
+    if (Date.now() - lastReact > 30000) { lastReact = Date.now(); try { reactivate(); } catch (e) { /* ignore */ } }
     const cookies = Object.fromEntries((req.headers.cookie || '').split(';').map((c) => c.trim().split('=')).filter((p) => p[0]).map(([k, ...v]) => [k, decodeURIComponent(v.join('='))]));
     req.cookies = cookies;
     req.i = make(cookies.lang === 'en' ? 'en' : 'ar');
@@ -90,6 +101,7 @@ function createApp(db, opts = {}) {
   const needAdmin = (req, res, next) => (req.user && req.user.role === 'company_admin' ? next() : req.user ? deny(req, res) : res.redirect(303, '/login'));
   const home = (u) => (u.role === 'super_admin' ? '/admin' : '/app');
   const P = plansInit({ app, db, q, q1, run, audit, ctx, go, deny, needSuper, needAdmin, nav: (req) => nav(req) });
+  paymentsInit({ app, db, q, q1, run, audit, ctx, go, deny, needSuper, needAdmin, nav: (req) => nav(req) });
   const D = devicesInit({ app, db, q, q1, run, audit, ctx, go, deny, needAdmin, nav: (req) => nav(req) }, P);
 
   // ---- language / root
@@ -196,7 +208,7 @@ ${field(t('Current password'), 'current', '', { type: 'password', req: true })}$
   function nav(req) {
     const t = req.i.t, u = req.user;
     if (!u) return '';
-    if (u.role === 'super_admin') return `<a href="/admin">${t('Dashboard')}</a><a href="/admin/companies">${t('Companies')}</a><a href="/admin/plans">${t('Subscription Plans & Pricing')}</a><a href="/admin/audit">${t('Audit log')}</a>`;
+    if (u.role === 'super_admin') return `<a href="/admin">${t('Dashboard')}</a><a href="/admin/companies">${t('Companies')}</a><a href="/admin/plans">${t('Subscription Plans & Pricing')}</a><a href="/admin/payment-methods">${t('Payment Methods')}</a><a href="/admin/payments">${t('Payments')}</a><a href="/admin/audit">${t('Audit log')}</a>`;
     let h = `<a href="/app">${t('Dashboard')}</a>`;
     if (can(u, 'customers.view')) h += `<a href="/app/customers">${t('Customers')}</a>`;
     if (u.role === 'company_admin') h += `<a href="/app/employees">${t('Employees')}</a><a href="/app/network">${t('Network Management')}</a><a href="/app/subscription">${t('My Subscription')}</a><a href="/app/settings">${t('Settings')}</a>`;
@@ -318,7 +330,9 @@ $('plan_id').onchange=fill;$('period').onchange=upd;$('sub_start').onchange=upd;
     const link = req.flash && req.flash.link ? '' : '';
     res.send(page(c, co.name, `<div class="card"><h3>${esc(co.name)} ${badge(statusOf(co), t)}</h3>
 <p class="mut">${t('Plan')}: ${esc(P.planName(P.getPlan(co.plan), req.i))} | ${t('Trial ends')}: ${esc(co.trial_ends || '-')} | ${t('Subscription ends')}: ${esc(co.subscription_ends || '-')} | ${t('Registered')}: ${esc(co.created_at)} | ${t('Customers')}: ${cust}</p>
-<p>${co.status === 'suspended' ? act('status', t('Activate'), 'ok') : act('status', t('Suspend'), 'bad')} <a class="btn sec" href="/admin/companies/${co.id}/export">${t('Export')}</a></p>
+${co.status === 'suspended' ? `<p class="flash err">${t('Suspended')}${co.suspended_until ? ` - ${t('Auto-reactivates on')} ${esc(co.suspended_until)}` : ` - ${t('Until reactivated manually')}`}</p><p>${act('status', t('Activate'), 'ok')}</p>` : `<form method="post" action="/admin/companies/${co.id}/status" class="row">${csrfField(c)}${field(t('Suspend until (leave empty for indefinite)'), 'until', '', { type: 'date' })}${field(t('Or suspend for N days'), 'days', '', { type: 'number' })}<div style="padding-top:22px"><button class="bad">${t('Suspend')}</button></div></form>`}
+<p><a class="btn sec" href="/admin/companies/${co.id}/export">${t('Export')}</a></p>
+<form method="post" action="/admin/companies/${co.id}/delete" class="card" style="border:1px solid var(--bad)" onsubmit="return confirm('${t('Delete this client and all its data? A full archive copy is kept.')}')">${csrfField(c)}<h3 style="color:var(--bad)">${t('Delete client')}</h3><p class="mut">${t('Removes the client, its users, customers, invoices and devices. A full archive copy is kept in the database. Type the exact client name to confirm.')}</p>${field(t('Client name'), 'confirm_name', '')}<p><button class="bad">${t('Delete client')}</button></p></form>
 <form method="post" action="/admin/companies/${co.id}/extend" class="row">${csrfField(c)}${field(t('Days'), 'days', '30', { type: 'number' })}<div style="padding-top:22px"><button>${t('Extend')}</button></div></form></div>
 <div class="card"><h3>${t('Company profile')}</h3><form method="post" action="/admin/companies/${co.id}/edit">${csrfField(c)}${companyForm(c, t, co)}<p><button>${t('Save')}</button></p></form></div>
 ${P.adminSubscriptionCard(req, c, co)}
@@ -336,11 +350,43 @@ ${P.adminSubscriptionCard(req, c, co)}
   });
   app.post('/admin/companies/:id/status', needSuper, (req, res) => {
     const co = getCompany(req, res); if (!co) return;
-    const to = co.status === 'suspended' ? (co.plan === 'trial' ? 'trial' : 'active') : 'suspended';
-    run('UPDATE companies SET status=? WHERE id=?', to, co.id);
-    if (to === 'suspended') run('DELETE FROM sessions WHERE user_id IN (SELECT id FROM users WHERE company_id=?)', co.id);
-    audit(req, to === 'suspended' ? 'company_suspended' : 'company_activated', co.name, co.id);
-    go(res, `/admin/companies/${co.id}`, 'ok', req.i.t('Updated'));
+    const t = req.i.t, back = `/admin/companies/${co.id}`;
+    if (co.status === 'suspended') {
+      run('UPDATE companies SET status=?, suspended_until=NULL WHERE id=?', co.plan === 'trial' ? 'trial' : 'active', co.id);
+      audit(req, 'company_activated', co.name, co.id);
+      return go(res, back, 'ok', t('Updated'));
+    }
+    let until = null; const today = new Date().toISOString().slice(0, 10);
+    const days = String(req.body.days || '').trim(), u = String(req.body.until || '').trim();
+    if (days) {
+      const n = Number(days); if (!Number.isInteger(n) || n < 1 || n > 3650) return go(res, back, 'err', t('Invalid date'));
+      until = new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);
+    } else if (u) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(u) || isNaN(Date.parse(u)) || u <= today) return go(res, back, 'err', t('Invalid date'));
+      until = u;
+    }
+    run("UPDATE companies SET status='suspended', suspended_until=? WHERE id=?", until, co.id);
+    run('DELETE FROM sessions WHERE user_id IN (SELECT id FROM users WHERE company_id=?)', co.id);
+    audit(req, 'company_suspended', `${co.name}${until ? ' until ' + until : ''}`, co.id);
+    go(res, back, 'ok', t('Updated'));
+  });
+  app.post('/admin/companies/:id/delete', needSuper, (req, res) => {
+    const co = getCompany(req, res); if (!co) return;
+    const t = req.i.t;
+    if (String(req.body.confirm_name || '').trim() !== co.name) return go(res, `/admin/companies/${co.id}`, 'err', t('Type the exact client name to confirm deletion'));
+    const users = q('SELECT id,name,username,email,role,emp_role,status FROM users WHERE company_id=?', co.id);
+    const snap = { company: co, users };
+    for (const tb of ['customers', 'invoices', 'payments', 'plan_requests', 'devices', 'device_groups', 'device_alerts']) snap[tb] = q(`SELECT * FROM ${tb} WHERE company_id=?`, co.id);
+    try {
+      run('INSERT INTO deleted_companies(company_id,name,deleted_by,snapshot) VALUES(?,?,?,?)', co.id, co.name, req.user.username, JSON.stringify(snap));
+      for (const tb of ['payments', 'device_alerts', 'device_groups', 'devices', 'plan_requests', 'invoices', 'customers']) run(`DELETE FROM ${tb} WHERE company_id=?`, co.id);
+      run('DELETE FROM sessions WHERE user_id IN (SELECT id FROM users WHERE company_id=?)', co.id);
+      run('DELETE FROM reset_tokens WHERE user_id IN (SELECT id FROM users WHERE company_id=?)', co.id);
+      run('DELETE FROM users WHERE company_id=?', co.id);
+      run('DELETE FROM companies WHERE id=?', co.id);
+    } catch (e) { return go(res, '/admin/companies', 'err', t('Could not save')); }
+    audit(req, 'company_deleted', co.name, null);
+    go(res, '/admin/companies', 'ok', t('Client deleted. A full archive copy was kept.'));
   });
   app.post('/admin/companies/:id/extend', needSuper, (req, res) => {
     const co = getCompany(req, res); if (!co) return;
@@ -514,16 +560,35 @@ ${field(t('New password'), 'password', '', { type: 'password' })}${select(t('Rol
   });
 
   // ---- company settings & audit
+  const okImg = (s) => s === '' || (/^data:image\/(png|jpeg|gif|webp);base64,[A-Za-z0-9+/=]+$/.test(s) && s.length <= 300000);
+  const okColor = (s) => /^#[0-9a-fA-F]{6}$/.test(s);
   app.get('/app/settings', needAdmin, (req, res) => {
     const t = req.i.t, c = ctx(req), co = q1('SELECT * FROM companies WHERE id=?', req.user.company_id);
-    res.send(page(c, 'Settings', `<div class="card"><h3>${t('Company profile')}</h3><form method="post" action="/app/settings">${csrfField(c)}<div class="row">${field(t('Company name'), 'name', co.name, { req: true })}${field(t('Network name'), 'network_name', co.network_name)}${field(t('Owner name'), 'owner_name', co.owner_name)}${field(t('Phone'), 'phone', co.phone)}${field(t('WhatsApp'), 'whatsapp', co.whatsapp)}${field(t('Country'), 'country', co.country)}${field(t('City'), 'city', co.city)}${field(t('Address'), 'address', co.address)}</div><p><button>${t('Save')}</button></p></form></div>`, nav(req)));
+    const img = (id, label, v, h) => `<div><label>${t(label)}</label><input type="file" accept="image/png,image/jpeg,image/webp,image/gif" onchange="mcImg(this,'${id}')"><input type="hidden" name="${id}" id="${id}" value="${esc(v || '')}">${v ? `<p><img src="${esc(v)}" style="max-height:${h}px;max-width:240px;object-fit:contain" alt=""></p><label style="display:flex;gap:6px;align-items:center;color:var(--tx)"><input type="checkbox" style="width:auto" name="rm_${id}" value="1"> ${t('Remove')}</label>` : ''}</div>`;
+    res.send(page(c, 'Settings', `<div class="card"><h3>${t('Company Profile & Network Identity')}</h3><form method="post" action="/app/settings">${csrfField(c)}<div class="row">${field(t('Company name'), 'name', co.name, { req: true })}${field(t('Company legal name'), 'legal_name', co.legal_name)}${field(t('Network name'), 'network_name', co.network_name)}${field(t('Owner name'), 'owner_name', co.owner_name)}${field(t('Phone'), 'phone', co.phone)}${field(t('Secondary phone'), 'phone2', co.phone2)}${field(t('WhatsApp'), 'whatsapp', co.whatsapp)}${field(t('Country'), 'country', co.country)}${field(t('City'), 'city', co.city)}${field(t('Address'), 'address', co.address)}${field(t('Website'), 'website', co.website)}${field(t('Tax registration number'), 'tax_no', co.tax_no)}${field(t('Brand primary color'), 'brand_color', co.brand_color || '#2563eb', { type: 'color' })}${field(t('Brand secondary color'), 'brand_color2', co.brand_color2 || '#0f172a', { type: 'color' })}${field(t('Logo height (px)'), 'logo_h', co.logo_h || 48, { type: 'number' })}</div>
+<div class="row">${img('logo', 'Logo', co.logo, 120)}${img('stamp', 'Company stamp (optional)', co.stamp, 120)}</div>
+<p><label>${t('Description')}</label><textarea name="description" rows="2">${esc(co.description)}</textarea></p><p><label>${t('Customer support information')}</label><textarea name="support_info" rows="2">${esc(co.support_info)}</textarea></p><p><label>${t('Invoice footer text')}</label><textarea name="invoice_footer" rows="2">${esc(co.invoice_footer)}</textarea></p>
+<p class="mut">${t('Logos keep their aspect ratio. Allowed: PNG, JPG, WEBP, GIF up to 200KB.')}</p><p><button>${t('Save')}</button></p></form></div>
+<script>function mcImg(i,id){var f=i.files[0];if(!f)return;if(f.size>200000){alert('Max 200KB');i.value='';return}var r=new FileReader();r.onload=function(){document.getElementById(id).value=r.result};r.readAsDataURL(f)}</script>`, nav(req)));
   });
   app.post('/app/settings', needAdmin, (req, res) => {
-    const b = req.body, name = clean(b.name);
-    if (!name) return go(res, '/app/settings', 'err', req.i.t('required'));
-    run('UPDATE companies SET name=?,network_name=?,owner_name=?,phone=?,whatsapp=?,country=?,city=?,address=? WHERE id=?', name, clean(b.network_name), clean(b.owner_name), clean(b.phone, 40), clean(b.whatsapp, 40), clean(b.country, 40), clean(b.city, 80), clean(b.address, 300), req.user.company_id);
+    const b = req.body, t = req.i.t, name = clean(b.name);
+    const old = q1('SELECT logo,stamp FROM companies WHERE id=?', req.user.company_id);
+    if (!name) return go(res, '/app/settings', 'err', t('required'));
+    const pick = (k) => (b['rm_' + k] ? '' : (b[k] === undefined ? old[k] : String(b[k])));
+    const logo = pick('logo'), stamp = pick('stamp');
+    if (!okImg(logo) || !okImg(stamp)) return go(res, '/app/settings', 'err', t('Invalid image'));
+    const c1 = clean(b.brand_color, 7), c2 = clean(b.brand_color2, 7);
+    if (!okColor(c1) || !okColor(c2)) return go(res, '/app/settings', 'err', t('Invalid color'));
+    const lh = Math.round(Number(b.logo_h));
+    if (!(lh >= 16 && lh <= 200)) return go(res, '/app/settings', 'err', t('Invalid logo size'));
+    const web = clean(b.website, 200);
+    if (web && !/^https?:\/\/[^\s<>"']+$/i.test(web)) return go(res, '/app/settings', 'err', t('Invalid website'));
+    try {
+      run('UPDATE companies SET name=?,legal_name=?,network_name=?,owner_name=?,phone=?,phone2=?,whatsapp=?,country=?,city=?,address=?,website=?,tax_no=?,description=?,support_info=?,invoice_footer=?,brand_color=?,brand_color2=?,logo_h=?,logo=?,stamp=? WHERE id=?', name, clean(b.legal_name, 200), clean(b.network_name, 120), clean(b.owner_name), clean(b.phone, 40), clean(b.phone2, 40), clean(b.whatsapp, 40), clean(b.country, 40), clean(b.city, 80), clean(b.address, 300), web, clean(b.tax_no, 60), clean(b.description, 1000), clean(b.support_info, 600), clean(b.invoice_footer, 600), c1, c2, lh, logo, stamp, req.user.company_id);
+    } catch (e) { return go(res, '/app/settings', 'err', t('Could not save')); }
     audit(req, 'company_settings_updated', name);
-    go(res, '/app/settings', 'ok', req.i.t('Saved'));
+    go(res, '/app/settings', 'ok', t('Saved'));
   });
   app.get('/app/audit', needCompany, need('audit.view'), (req, res) => {
     const rows = q('SELECT a.*, u.username FROM audit_log a LEFT JOIN users u ON u.id=a.user_id WHERE a.company_id=? ORDER BY a.id DESC LIMIT 200', req.user.company_id);
