@@ -1,0 +1,13 @@
+{
+  "name": "mikrocloud-isp-manager",
+  "version": "0.1.0-phase1",
+  "private": true,
+  "description": "MikroCloud ISP Manager - Phase 1 (foundation): auth, roles, tenant isolation, companies, employees, customers",
+  "main": "server.js",
+  "engines": { "node": ">=22.5" },
+  "scripts": {
+    "start": "node --no-warnings server.js",
+    "test": "node --no-warnings --test"
+  },
+  "dependencies": { "express": "^5.1.0" }
+}
