@@ -7,6 +7,7 @@ const { init: plansInit } = require('./plans');
 const { init: devicesInit } = require('./devices');
 const { init: paymentsInit } = require('./payments');
 const { init: financeInit } = require('./finance');
+const { init: vouchersInit } = require('./vouchers');
 const { infoGrid, esc, page, csrfField, badge, field, select } = V;
 
 const SESSION_TTL = 8 * 3600e3, REMEMBER_TTL = 30 * 24 * 3600e3;
@@ -104,6 +105,7 @@ function createApp(db, opts = {}) {
   const P = plansInit({ app, db, q, q1, run, audit, ctx, go, deny, needSuper, needAdmin, nav: (req) => nav(req) });
   paymentsInit({ app, db, q, q1, run, audit, ctx, go, deny, needSuper, needAdmin, nav: (req) => nav(req) });
   const FIN = financeInit({ app, db, q, q1, run, audit, ctx, go, deny, needAdmin, nav: (req) => nav(req) });
+  vouchersInit({ app, db, q, q1, run, audit, ctx, go, deny, needAdmin, nav: (req) => nav(req), P });
   const D = devicesInit({ app, db, q, q1, run, audit, ctx, go, deny, needAdmin, nav: (req) => nav(req) }, P);
 
   // ---- language / root
@@ -213,7 +215,7 @@ ${field(t('Current password'), 'current', '', { type: 'password', req: true })}$
     if (u.role === 'super_admin') return `<a href="/admin">${t('Dashboard')}</a><a href="/admin/companies">${t('Companies')}</a><a href="/admin/plans">${t('Subscription Plans & Pricing')}</a><a href="/admin/payment-methods">${t('Payment Methods')}</a><a href="/admin/payments">${t('Payments')}</a><a href="/admin/audit">${t('Audit log')}</a>`;
     let h = `<a href="/app">${t('Dashboard')}</a>`;
     if (can(u, 'customers.view')) h += `<a href="/app/customers">${t('Customers')}</a>`;
-    if (u.role === 'company_admin') h += `<a href="/app/employees">${t('Employees')}</a><a href="/app/packages">${t('Packages')}</a><a href="/app/finance">${t('Finance')}</a><a href="/app/network">${t('Network Management')}</a><a href="/app/subscription">${t('My Subscription')}</a><a href="/app/settings">${t('Settings')}</a>`;
+    if (u.role === 'company_admin') h += `<a href="/app/employees">${t('Employees')}</a><a href="/app/packages">${t('Packages')}</a><a href="/app/vouchers">${t('Vouchers')}</a><a href="/app/finance">${t('Finance')}</a><a href="/app/network">${t('Network Management')}</a><a href="/app/subscription">${t('My Subscription')}</a><a href="/app/settings">${t('Settings')}</a>`;
     if (can(u, 'audit.view')) h += `<a href="/app/audit">${t('Audit log')}</a>`;
     return h;
   }
@@ -381,7 +383,7 @@ ${can(req.user, 'customers.edit') && req.user.role === 'company_admin' ? FIN.cus
     for (const tb of ['customers', 'invoices', 'payments', 'plan_requests', 'devices', 'device_groups', 'device_alerts']) snap[tb] = q(`SELECT * FROM ${tb} WHERE company_id=?`, co.id);
     try {
       run('INSERT INTO deleted_companies(company_id,name,deleted_by,snapshot) VALUES(?,?,?,?)', co.id, co.name, req.user.username, JSON.stringify(snap));
-      for (const tb of ['cust_payments', 'cust_invoices', 'expenses', 'packages', 'payments', 'device_alerts', 'device_groups', 'devices', 'plan_requests', 'invoices', 'customers']) run(`DELETE FROM ${tb} WHERE company_id=?`, co.id);
+      for (const tb of ['vouchers', 'voucher_batches', 'voucher_templates', 'cust_payments', 'cust_invoices', 'expenses', 'packages', 'payments', 'device_alerts', 'device_groups', 'devices', 'plan_requests', 'invoices', 'customers']) run(`DELETE FROM ${tb} WHERE company_id=?`, co.id);
       run('DELETE FROM sessions WHERE user_id IN (SELECT id FROM users WHERE company_id=?)', co.id);
       run('DELETE FROM reset_tokens WHERE user_id IN (SELECT id FROM users WHERE company_id=?)', co.id);
       run('DELETE FROM users WHERE company_id=?', co.id);

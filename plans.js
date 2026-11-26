@@ -75,7 +75,7 @@ function init(h) {
       max_routers: n(`SELECT count(*) n FROM devices WHERE company_id=? AND category IN (${marks(ROUTER_CATS)})`, ...ROUTER_CATS),
       max_aps: n(`SELECT count(*) n FROM devices WHERE company_id=? AND category IN (${marks(AP_CATS)})`, ...AP_CATS),
       max_devices: n('SELECT count(*) n FROM devices WHERE company_id=?'),
-      max_vouchers_batch: 0, max_vouchers_month: 0, max_storage_mb: 0, max_api_ops: 0,
+      max_vouchers_batch: 0, max_vouchers_month: q1("SELECT count(*) n FROM vouchers WHERE company_id=? AND substr(created_at,1,7)=?", cid, today().slice(0, 7)).n, max_storage_mb: 0, max_api_ops: 0,
     };
   }
   // returns null if allowed, or {key,limit,used} when adding `add` more would exceed the effective limit (backend check)
