@@ -46,6 +46,11 @@ function ar(){return document.documentElement.lang==='ar'}
 window.mcModal=function(msg,yes,cls){var o=document.createElement('div');o.className='mo';var b=document.createElement('div');b.className='mb '+(cls||'');var m=document.createElement('div');m.textContent=msg;var t=document.createElement('div');t.className='bt';var ok=document.createElement('button');ok.type='button';ok.textContent=ar()?'موافق':'OK';t.appendChild(ok);if(yes){var c=document.createElement('button');c.type='button';c.className='sec';c.textContent=ar()?'إلغاء':'Cancel';c.onclick=function(){o.remove()};t.appendChild(c)}ok.onclick=function(){o.remove();if(yes)yes()};b.appendChild(m);b.appendChild(t);o.appendChild(b);document.body.appendChild(o);ok.focus()};
 window.confirm=function(msg){if(okFlag){okFlag=false;return true}var f=last;if(f){f.classList.remove('loading');window.mcModal(String(msg),function(){okFlag=true;if(f.requestSubmit)f.requestSubmit();else f.submit()})}return false};
 window.alert=function(msg){window.mcModal(String(msg))}})();
+(function(){function pad(n){return n<10?'0'+n:''+n}
+function conv(root){var re=/(\\d{4})-(\\d{2})-(\\d{2}) (\\d{2}):(\\d{2})(:(\\d{2}))?/g,w=document.createTreeWalker(root,NodeFilter.SHOW_TEXT,null),n,L=[];while(n=w.nextNode()){var p=n.parentNode&&n.parentNode.nodeName;if(p==='SCRIPT'||p==='STYLE'||p==='TEXTAREA'||p==='OPTION')continue;if(re.test(n.nodeValue))L.push(n);re.lastIndex=0}
+L.forEach(function(n){n.nodeValue=n.nodeValue.replace(re,function(m,y,mo,d,h,mi,sx,s){var dt=new Date(Date.UTC(+y,+mo-1,+d,+h,+mi,+(s||0)));if(isNaN(dt))return m;return dt.getFullYear()+'-'+pad(dt.getMonth()+1)+'-'+pad(dt.getDate())+' '+pad(dt.getHours())+':'+pad(dt.getMinutes())+(sx?':'+pad(dt.getSeconds()):'')});re.lastIndex=0;if(n.parentNode&&n.parentNode.setAttribute)n.parentNode.setAttribute('title','UTC')})}
+window.mcLocalTimes=conv;conv(document.body);
+var a=document.querySelector('[data-autorefresh]');if(a)setInterval(function(){var e=document.activeElement;if(document.hidden||document.querySelector('.mo')||(e&&/^(INPUT|SELECT|TEXTAREA)$/.test(e.tagName)))return;location.reload()},30000)})();
 function tp(id,b){var i=document.getElementById(id);i.type=i.type==='password'?'text':'password'}`;
 
 function page(ctx, title, body, nav = '') {

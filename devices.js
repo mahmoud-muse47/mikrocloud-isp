@@ -63,7 +63,7 @@ function init(h, P) {
 
   function table(req, rows) {
     const t = req.i.t, byId = Object.fromEntries(q('SELECT id,name FROM devices WHERE company_id=?', req.user.company_id).map((r) => [r.id, r.name]));
-    return `<div class="card tbl"><table><tr><th></th><th>${t('Device name')}</th><th>${t('Device type')}</th><th>${t('Manufacturer')}</th><th>${t('Device model')}</th><th>${t('IP address')}</th><th>${t('MAC address')}</th><th>${t('Location')}</th><th>${t('Parent device')}</th><th>${t('Connection status')}</th><th>${t('Last connection')}</th><th>${t('Uptime')}</th><th></th></tr>
+    return `<div class="card tbl" data-autorefresh="1"><table><tr><th></th><th>${t('Device name')}</th><th>${t('Device type')}</th><th>${t('Manufacturer')}</th><th>${t('Device model')}</th><th>${t('IP address')}</th><th>${t('MAC address')}</th><th>${t('Location')}</th><th>${t('Parent device')}</th><th>${t('Connection status')}</th><th>${t('Last connection')}</th><th>${t('Uptime')}</th><th></th></tr>
 ${rows.map((d) => { const st = liveStatus(d); return `<tr><td>${dot(st, t)}</td><td><a href="/app/network/devices/${d.id}">${esc(d.name)}</a></td><td>${esc(catLabel(d, t))}</td><td>${esc(d.manufacturer)}</td><td>${esc(d.model)}</td><td>${esc(d.ip)}</td><td>${esc(d.mac)}</td><td>${esc([d.location, d.building, d.area].filter(Boolean).join(' / '))}</td><td>${esc(byId[d.parent_id] || '-')}</td><td>${t(st[0].toUpperCase() + st.slice(1))}</td><td>${esc(d.last_ok || '-')}</td><td>${t('Not reported')}</td><td><a href="/app/network/devices/${d.id}">${t('View')}</a></td></tr>`; }).join('') || `<tr><td colspan="13">${t('No results')}</td></tr>`}</table></div>`;
   }
   const listPage = (key, title) => (req, res) => {
@@ -283,16 +283,22 @@ ${kv('Credentials', d.cred_enc ? `${d.cred_user} / ******** (${t('encrypted')})`
     if (existing) self.cat = existing.category;
     const id = upsert(cid, self, true);
     if (id === null) return res.status(403).type('text').send('plan limit reached');
-    let added = 0;
+    let added = 0; const nbSeen = [];
     for (const rec of txt(kv.nb, 4000).split(';').slice(0, 50)) {
       const [nm, nid, plat, addr] = rec.split('|');
       if (!nm || !MACRE.test(nm.trim())) continue;
       const m = nm.trim().toUpperCase(); if (m === (mac || '').toUpperCase()) continue;
       const pl = txt(plat, 40), cat = /switch|css/i.test(pl) ? 'switch' : /cap|wap|ap/i.test(pl) && /mikrotik/i.test(pl) ? 'ap' : /mikrotik/i.test(pl) ? 'secondary_router' : 'other';
       const ip = IPV4.test((addr || '').trim()) ? addr.trim() : '';
-      if (upsert(cid, { name: txt(nid, 80) || m, mac: m, ip, model: pl, cat }, false) !== null) added++;
+      if (upsert(cid, { name: txt(nid, 80) || m, mac: m, ip, model: pl, cat }, false) !== null) { added++; nbSeen.push([m, txt(nid, 80), pl, ip].join('|')); }
     }
-    run("INSERT INTO audit_log(company_id,user_id,action,detail,ip) VALUES(?,?,?,?,?)", cid, null, 'device_auto_sync', `${self.name} (+${added} neighbors)`, req.ip);
+    // Polls are not logged. The static device and neighbour info is logged once, and again only when it changes.
+    const sig = crypto.createHash('sha256').update(JSON.stringify([self.name, self.model, self.firmware, self.serial, self.mac, self.ip, nbSeen.sort()])).digest('hex');
+    const sk = `enrollsig:${cid}:${self.mac || self.name}`, prevSig = q1('SELECT v FROM app_settings WHERE k=?', sk);
+    if (!prevSig || prevSig.v !== sig) {
+      run('DELETE FROM app_settings WHERE k=?', sk); run('INSERT INTO app_settings(k,v) VALUES(?,?)', sk, sig);
+      run("INSERT INTO audit_log(company_id,user_id,action,detail,ip) VALUES(?,?,?,?,?)", cid, null, 'device_auto_sync', `${self.name} (+${added} neighbors)${prevSig ? ' - info changed' : ' - first sync'}`, req.ip);
+    }
     res.type('text').send('ok');
   });
 
@@ -311,7 +317,7 @@ ${kv('Credentials', d.cred_enc ? `${d.cred_user} / ******** (${t('encrypted')})`
   });
   app.get('/app/network/alerts', needAdmin, gate, (req, res) => {
     const t = req.i.t, c = ctx(req), rows = q('SELECT a.*, d.name dname FROM device_alerts a LEFT JOIN devices d ON d.id=a.device_id WHERE a.company_id=? ORDER BY a.id DESC LIMIT 200', req.user.company_id);
-    res.send(page(c, 'Device Alerts', sub(req, 'alerts', `<div class="card"><p class="mut">${t('Alerts are shown in the app only. Email and Telegram notifications are not available in this version.')}</p></div><div class="card tbl"><table><tr><th>${t('Time')}</th><th>${t('Severity')}</th><th>${t('Alert')}</th><th>${t('Device name')}</th><th></th></tr>${rows.map((a) => `<tr><td>${esc(a.created_at)}</td><td>${esc(a.severity)}</td><td>${t(a.kind)}</td><td>${esc(a.dname || a.msg)}</td><td>${a.ack ? t('Acknowledged') : `<form class="inline" method="post" action="/app/network/alerts/${a.id}/ack">${csrfField(c)}<button class="sec">${t('Acknowledge')}</button></form>`}</td></tr>`).join('') || `<tr><td colspan="5">${t('No results')}</td></tr>`}</table></div>`), nav(req)));
+    res.send(page(c, 'Device Alerts', sub(req, 'alerts', `<div class="card"><p class="mut">${t('Alerts are shown in the app only. Email and Telegram notifications are not available in this version.')}</p></div><div class="card tbl" data-autorefresh="1"><table><tr><th>${t('Time')}</th><th>${t('Severity')}</th><th>${t('Alert')}</th><th>${t('Device name')}</th><th></th></tr>${rows.map((a) => `<tr><td>${esc(a.created_at)}</td><td>${esc(a.severity)}</td><td>${t(a.kind)}</td><td>${esc(a.dname || a.msg)}</td><td>${a.ack ? t('Acknowledged') : `<form class="inline" method="post" action="/app/network/alerts/${a.id}/ack">${csrfField(c)}<button class="sec">${t('Acknowledge')}</button></form>`}</td></tr>`).join('') || `<tr><td colspan="5">${t('No results')}</td></tr>`}</table></div>`), nav(req)));
   });
   app.post('/app/network/alerts/:id/ack', needAdmin, gate, (req, res) => {
     run('UPDATE device_alerts SET ack=1 WHERE id=? AND company_id=?', Number(req.params.id), req.user.company_id);
@@ -320,7 +326,7 @@ ${kv('Credentials', d.cred_enc ? `${d.cred_user} / ******** (${t('encrypted')})`
   app.get('/app/network/logs', needAdmin, gate, (req, res) => {
     const t = req.i.t, c = ctx(req), s = clean(req.query.q, 60);
     const rows = q("SELECT * FROM audit_log WHERE company_id=? AND action LIKE 'device_%' AND (action LIKE ? OR detail LIKE ?) ORDER BY id DESC LIMIT 200", req.user.company_id, `%${s}%`, `%${s}%`);
-    res.send(page(c, 'Device Activity Logs', sub(req, 'logs', `<div class="card"><form method="get" class="row"><div><input name="q" value="${esc(s)}" placeholder="${t('Search')}"></div><div><button>${t('Search')}</button></div></form></div><div class="card tbl"><table><tr><th>${t('Time')}</th><th>${t('Action')}</th><th>${t('Detail')}</th></tr>${rows.map((a) => `<tr><td>${esc(a.ts)}</td><td>${esc(a.action)}</td><td>${esc(a.detail)}</td></tr>`).join('') || `<tr><td colspan="3">${t('No results')}</td></tr>`}</table></div>`), nav(req)));
+    res.send(page(c, 'Device Activity Logs', sub(req, 'logs', `<div class="card"><form method="get" class="row"><div><input name="q" value="${esc(s)}" placeholder="${t('Search')}"></div><div><button>${t('Search')}</button></div></form></div><div class="card tbl" data-autorefresh="1"><table><tr><th>${t('Time')}</th><th>${t('Action')}</th><th>${t('Detail')}</th></tr>${rows.map((a) => `<tr><td>${esc(a.ts)}</td><td>${esc(a.action)}</td><td>${esc(a.detail)}</td></tr>`).join('') || `<tr><td colspan="3">${t('No results')}</td></tr>`}</table></div>`), nav(req)));
   });
   return { liveStatus, evaluate, decrypt };
 }

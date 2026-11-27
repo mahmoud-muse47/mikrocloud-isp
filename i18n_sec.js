@@ -15,4 +15,5 @@ Object.assign(module.exports, {
 Object.assign(module.exports, {
   'New password': 'كلمة مرور جديدة', 'Create a new password for this user? The old one stops working.': 'إنشاء كلمة مرور جديدة لهذا المستخدم؟ ستتوقف القديمة عن العمل.',
   'Shown once. Copy it now and give it to the user. It cannot be shown again, only replaced with another new one. All sessions of this user were signed out.': 'تظهر مرة واحدة. انسخها الآن وسلّمها للمستخدم. لا يمكن عرضها مرة أخرى، فقط استبدالها بجديدة. تم تسجيل خروج كل جلسات هذا المستخدم.',
+  'Activity log': 'سجل نشاط العميل', 'Logins': 'الدخول', 'Edits': 'التعديلات', 'Routers': 'الراوترات', 'User': 'المستخدم',
 });

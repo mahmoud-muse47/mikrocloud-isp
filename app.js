@@ -335,7 +335,7 @@ ${field(t('Current password'), 'current', '', { type: 'password', req: true })}$
   PT.init({ app, db, audit, ctx, go, needSuper, nav: (req) => nav(req), AB, requireSuper2fa });
   app.get('/admin/audit', needSuper, (req, res) => {
     const rows = q('SELECT a.*, c.name cname, u.username FROM audit_log a LEFT JOIN companies c ON c.id=a.company_id LEFT JOIN users u ON u.id=a.user_id ORDER BY a.id DESC LIMIT 200');
-    res.send(page(ctx(req), 'Audit', `<div class="card tbl"><table><tr><th>Time</th><th>Company</th><th>User</th><th>Action</th><th>Detail</th><th>IP</th></tr>${rows.map((a) => `<tr><td>${esc(a.ts)}</td><td>${esc(a.cname || '-')}</td><td>${esc(a.username || '-')}</td><td>${esc(a.action)}</td><td>${esc(a.detail)}</td><td>${esc(a.ip)}</td></tr>`).join('')}</table></div>`, nav(req)));
+    res.send(page(ctx(req), 'Audit', `<div class="card tbl" data-autorefresh="1"><table><tr><th>Time</th><th>Company</th><th>User</th><th>Action</th><th>Detail</th><th>IP</th></tr>${rows.map((a) => `<tr><td>${esc(a.ts)}</td><td>${esc(a.cname || '-')}</td><td>${esc(a.username || '-')}</td><td>${esc(a.action)}</td><td>${esc(a.detail)}</td><td>${esc(a.ip)}</td></tr>`).join('')}</table></div>`, nav(req)));
   });
   app.get('/admin/companies', needSuper, (req, res) => {
     const t = req.i.t, c = ctx(req);
@@ -345,7 +345,7 @@ ${field(t('Current password'), 'current', '', { type: 'password', req: true })}$
     res.send(page(c, 'Companies', `<div class="card"><form method="get" class="row"><div><input name="q" value="${esc(s)}" placeholder="${t('Search')}"></div>
 ${select(t('Status'), 'status', st, [['', t('All')], ['active', t('Active')], ['trial', t('Trial')], ['suspended', t('Suspended')], ['expired', t('Expired')]])}<div style="padding-top:22px"><button>${t('Search')}</button> <a class="btn sec" href="/admin/companies/new">${t('New company')}</a></div></form></div>
 <div class="card tbl"><table><tr><th>#</th><th>${t('Company name')}</th><th>${t('Owner name')}</th><th>${t('Plan')}</th><th>${t('Status')}</th><th>${t('Customers')}</th><th></th></tr>
-${rows.map((r) => `<tr><td>${r.id}</td><td>${esc(r.name)}</td><td>${esc(r.owner_name)}</td><td>${esc(P.planName(P.getPlan(r.plan), req.i))}</td><td>${badge(statusOf(r), t)}</td><td>${r.cust}</td><td><a href="/admin/companies/${r.id}">${t('View')}</a></td></tr>`).join('') || `<tr><td colspan="7">${t('No results')}</td></tr>`}</table></div>`, nav(req)));
+${rows.map((r, ix) => `<tr><td>${ix + 1}</td><td>${esc(r.name)}</td><td>${esc(r.owner_name)}</td><td>${esc(P.planName(P.getPlan(r.plan), req.i))}</td><td>${badge(statusOf(r), t)}</td><td>${r.cust}</td><td><a href="/admin/companies/${r.id}">${t('View')}</a></td></tr>`).join('') || `<tr><td colspan="7">${t('No results')}</td></tr>`}</table></div>`, nav(req)));
   });
   const companyForm = (c, t, co = {}) => `<div class="row">${field(t('Company name'), 'name', co.name, { req: true })}${field(t('Network name'), 'network_name', co.network_name)}${field(t('Owner name'), 'owner_name', co.owner_name)}
 ${field(t('Email'), 'email', co.email, { type: 'email' })}${field(t('Phone'), 'phone', co.phone)}${field(t('WhatsApp'), 'whatsapp', co.whatsapp)}${field(t('Country'), 'country', co.country || 'EG')}${field(t('City'), 'city', co.city)}${field(t('Address'), 'address', co.address)}</div>${field(t('Notes'), 'notes', co.notes, { ta: true })}`;
@@ -421,6 +421,19 @@ $('plan_id').onchange=fill;$('period').onchange=upd;$('sub_start').onchange=upd;
     go(res, `/admin/companies/${cid}`, 'ok', t('Created'));
   });
   const getCompany = (req, res) => { const c = q1('SELECT * FROM companies WHERE id=?', Number(req.params.id)); if (!c) { deny(req, res, 404); return null; } return c; };
+  app.get('/admin/companies/:id/activity', needSuper, (req, res) => {
+    const co = getCompany(req, res); if (!co) return;
+    const t = req.i.t, c = ctx(req);
+    const per = 200, pg = Math.max(1, Number(req.query.page) || 1), kind = clean(req.query.kind, 20);
+    const where = kind === 'login' ? " AND (a.action LIKE 'login%' OR a.action LIKE 'logout%' OR a.action LIKE 'password%')" : kind === 'router' ? " AND (a.action LIKE 'device_%' OR a.action LIKE 'router_%')" : kind === 'edit' ? " AND a.action NOT LIKE 'login%' AND a.action NOT LIKE 'logout%' AND a.action NOT LIKE 'device_%' AND a.action NOT LIKE 'router_%'" : '';
+    const total = q1(`SELECT count(*) n FROM audit_log a WHERE a.company_id=?${where}`, co.id).n;
+    const rows = q(`SELECT a.*, u.username FROM audit_log a LEFT JOIN users u ON u.id=a.user_id WHERE a.company_id=?${where} ORDER BY a.id DESC LIMIT ${per} OFFSET ${(pg - 1) * per}`, co.id);
+    const tabs = [['', 'All'], ['login', 'Logins'], ['edit', 'Edits'], ['router', 'Routers']].map(([k, l]) => `<a class="btn${kind === k ? '' : ' sec'}" href="/admin/companies/${co.id}/activity${k ? '?kind=' + k : ''}">${t(l)}</a>`).join(' ');
+    const qs = (p) => `/admin/companies/${co.id}/activity?${kind ? 'kind=' + kind + '&' : ''}page=${p}`;
+    res.send(page(c, co.name, `<div class="card"><div class="head"><h3>${esc(co.name)} - ${t('Activity log')}</h3><div class="acts"><a class="btn sec" href="/admin/companies/${co.id}">${t('Back')}</a></div></div><p>${tabs}</p></div>
+<div class="card tbl" data-autorefresh="1"><table><tr><th>${t('Time')}</th><th>${t('User')}</th><th>${t('Action')}</th><th>${t('Detail')}</th><th>IP</th></tr>${rows.map((x) => `<tr><td>${esc(x.ts)}</td><td>${esc(x.username || '-')}</td><td>${esc(x.action)}</td><td dir="auto">${esc(x.detail)}</td><td>${esc(x.ip)}</td></tr>`).join('') || `<tr><td colspan="5">${t('No results')}</td></tr>`}</table>
+<div class="pager">${pg > 1 ? `<a href="${qs(pg - 1)}">${t('Previous')}</a>` : ''}<span class="mut">${total} | ${pg}/${Math.max(1, Math.ceil(total / per))}</span>${pg * per < total ? `<a href="${qs(pg + 1)}">${t('Next')}</a>` : ''}</div></div>`, nav(req)));
+  });
   app.get('/admin/companies/:id', needSuper, (req, res) => {
     const co = getCompany(req, res); if (!co) return;
     const t = req.i.t, c = ctx(req);
@@ -429,7 +442,7 @@ $('plan_id').onchange=fill;$('period').onchange=upd;$('sub_start').onchange=upd;
     const acts = q('SELECT * FROM audit_log WHERE company_id=? ORDER BY id DESC LIMIT 15', co.id);
     const act = (path, label, cls = '') => `<form class="inline" method="post" action="/admin/companies/${co.id}/${path}">${csrfField(c)}<button class="${cls}">${label}</button></form>`;
     const link = req.flash && req.flash.link ? '' : '';
-    res.send(page(c, co.name, `<div class="card"><div class="head"><h3>${esc(co.name)} ${badge(statusOf(co), t)}</h3><div class="acts"><a class="btn sec" href="/admin/companies/${co.id}/domains">${t('Custom domains')}</a> <a class="btn sec" href="/admin/companies/${co.id}/export">${t('Export')}</a></div></div>
+    res.send(page(c, co.name, `<div class="card"><div class="head"><h3>${esc(co.name)} ${badge(statusOf(co), t)}</h3><div class="acts"><a class="btn sec" href="/admin/companies/${co.id}/activity">${t('Activity log')}</a> <a class="btn sec" href="/admin/companies/${co.id}/domains">${t('Custom domains')}</a> <a class="btn sec" href="/admin/companies/${co.id}/export">${t('Export')}</a></div></div>
 ${infoGrid([[t('Plan'), esc(P.planName(P.getPlan(co.plan), req.i))], [t('Status'), badge(statusOf(co), t)], [t('Trial ends'), esc(co.trial_ends || '-')], [t('Subscription ends'), esc(co.subscription_ends || '-')], [t('Registered'), esc(String(co.created_at).slice(0, 10))], [t('Customers'), cust], [t('Owner name'), esc(co.owner_name || '-')], [t('Email'), esc(co.email)]])}
 ${co.status === 'suspended' ? `<p class="flash err">${t('Suspended')}${co.suspended_until ? ` - ${t('Auto-reactivates on')} ${esc(co.suspended_until)}` : ` - ${t('Until reactivated manually')}`}</p><p>${act('status', t('Activate'), 'ok')}</p>` : `<form method="post" action="/admin/companies/${co.id}/status" class="row" style="border:1px solid var(--bd);border-radius:12px;padding:12px;margin:12px 0">${csrfField(c)}${field(t('Suspend until (leave empty for indefinite)'), 'until', '', { type: 'date' })}${field(t('Or suspend for N days'), 'days', '', { type: 'number' })}<div style="padding-top:22px"><button class="bad">${t('Suspend')}</button></div></form>`}
 <form method="post" action="/admin/companies/${co.id}/delete" class="card" style="border:1px solid var(--bad)" onsubmit="return confirm('${t('Delete this client and all its data? A full archive copy is kept.')}')">${csrfField(c)}<h3 style="color:var(--bad)">${t('Delete client')}</h3><p class="mut">${t('Removes the client, its users, customers, invoices and devices. A full archive copy is kept in the database. Type the exact client name to confirm.')}</p>${field(t('Client name'), 'confirm_name', '')}<p><button class="bad">${t('Delete client')}</button></p></form>
@@ -483,6 +496,7 @@ ${P.adminSubscriptionCard(req, c, co)}
       for (const tb of ['vouchers', 'voucher_batches', 'voucher_templates', 'cust_payments', 'cust_invoices', 'expenses', 'packages', 'payments', 'router_cmds', 'router_items', 'device_alerts', 'device_groups', 'devices', 'plan_requests', 'invoices', 'customers']) run(`DELETE FROM ${tb} WHERE company_id=?`, co.id);
       run('DELETE FROM sessions WHERE user_id IN (SELECT id FROM users WHERE company_id=?)', co.id);
       run('DELETE FROM tenant_domains WHERE company_id=?', co.id);
+      run('DELETE FROM app_settings WHERE k LIKE ?', `enrollsig:${co.id}:%`);
       run('DELETE FROM reset_requests WHERE user_id IN (SELECT id FROM users WHERE company_id=?)', co.id);
       run('DELETE FROM reset_tokens WHERE user_id IN (SELECT id FROM users WHERE company_id=?)', co.id);
       run('DELETE FROM users WHERE company_id=?', co.id);
@@ -721,7 +735,7 @@ ${field(t('New password'), 'password', '', { type: 'password' })}${select(t('Rol
   });
   app.get('/app/audit', needCompany, need('audit.view'), (req, res) => {
     const rows = q('SELECT a.*, u.username FROM audit_log a LEFT JOIN users u ON u.id=a.user_id WHERE a.company_id=? ORDER BY a.id DESC LIMIT 200', req.user.company_id);
-    res.send(page(ctx(req), 'Audit', `<div class="card tbl"><table><tr><th>Time</th><th>User</th><th>Action</th><th>Detail</th><th>IP</th></tr>${rows.map((a) => `<tr><td>${esc(a.ts)}</td><td>${esc(a.username || '-')}</td><td>${esc(a.action)}</td><td>${esc(a.detail)}</td><td>${esc(a.ip)}</td></tr>`).join('')}</table></div>`, nav(req)));
+    res.send(page(ctx(req), 'Audit', `<div class="card tbl" data-autorefresh="1"><table><tr><th>Time</th><th>User</th><th>Action</th><th>Detail</th><th>IP</th></tr>${rows.map((a) => `<tr><td>${esc(a.ts)}</td><td>${esc(a.username || '-')}</td><td>${esc(a.action)}</td><td>${esc(a.detail)}</td><td>${esc(a.ip)}</td></tr>`).join('')}</table></div>`, nav(req)));
   });
 
   app.use((req, res) => (req.user ? deny(req, res, 404) : res.status(404).send('Not found')));
