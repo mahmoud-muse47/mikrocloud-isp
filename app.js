@@ -40,7 +40,7 @@ function createApp(db, opts = {}) {
   PT.bind(db);
   app.use(PT.hostGuard);
   app.use(express.urlencoded({ extended: false, limit: '400kb' }));
-  app.use('/api/enroll', express.text({ type: '*/*', limit: '16kb' }));
+  app.use(['/api/enroll', '/api/router'], express.text({ type: '*/*', limit: '32kb' }));
   try { run('DELETE FROM login_history WHERE ts<?', new Date(Date.now() - 90 * 864e5).toISOString().slice(0, 19).replace('T', ' ')); } catch { }
   const sqlTs = (ms) => new Date(ms).toISOString().slice(0, 19).replace('T', ' ');
   // persistent per-IP throttle: counts attempts recorded in login_history (survives restarts)
@@ -103,7 +103,7 @@ function createApp(db, opts = {}) {
   });
   app.use(PT.portalSession);
   app.use((req, res, next) => {
-    if (req.method === 'POST' && req.path !== '/api/enroll') {
+    if (req.method === 'POST' && req.path !== '/api/enroll' && !req.path.startsWith('/api/router/')) {
       const tok = req.body && req.body._csrf;
       if (!tok || !req.csrf || tok.length !== req.csrf.length || !crypto.timingSafeEqual(Buffer.from(tok), Buffer.from(req.csrf)))
         return res.status(403).send('Invalid CSRF token');
@@ -480,7 +480,7 @@ ${P.adminSubscriptionCard(req, c, co)}
     for (const tb of ['customers', 'invoices', 'payments', 'plan_requests', 'devices', 'device_groups', 'device_alerts']) snap[tb] = q(`SELECT * FROM ${tb} WHERE company_id=?`, co.id);
     try {
       run('INSERT INTO deleted_companies(company_id,name,deleted_by,snapshot) VALUES(?,?,?,?)', co.id, co.name, req.user.username, JSON.stringify(snap));
-      for (const tb of ['vouchers', 'voucher_batches', 'voucher_templates', 'cust_payments', 'cust_invoices', 'expenses', 'packages', 'payments', 'device_alerts', 'device_groups', 'devices', 'plan_requests', 'invoices', 'customers']) run(`DELETE FROM ${tb} WHERE company_id=?`, co.id);
+      for (const tb of ['vouchers', 'voucher_batches', 'voucher_templates', 'cust_payments', 'cust_invoices', 'expenses', 'packages', 'payments', 'router_cmds', 'router_items', 'device_alerts', 'device_groups', 'devices', 'plan_requests', 'invoices', 'customers']) run(`DELETE FROM ${tb} WHERE company_id=?`, co.id);
       run('DELETE FROM sessions WHERE user_id IN (SELECT id FROM users WHERE company_id=?)', co.id);
       run('DELETE FROM tenant_domains WHERE company_id=?', co.id);
       run('DELETE FROM reset_requests WHERE user_id IN (SELECT id FROM users WHERE company_id=?)', co.id);

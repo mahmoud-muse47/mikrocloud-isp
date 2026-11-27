@@ -1,6 +1,7 @@
 const crypto = require('node:crypto');
 const { esc, page, csrfField, field, select } = require('./views');
 const { ROUTER_CATS, AP_CATS } = require('./plans');
+const RS = require('./routersync');
 
 const CATS = [
   ['main_router', 'Main MikroTik Router'], ['secondary_router', 'Secondary MikroTik Router'], ['core_router', 'Core Router'], ['edge_router', 'Edge Router'],
@@ -15,7 +16,8 @@ const KINDS = {
 const PAGES = [['all', 'All Devices', '/app/network'], ['routers_main', 'Main Routers', '/app/network/main-routers'], ['routers_secondary', 'Secondary Routers', '/app/network/secondary-routers'],
   ['aps', 'Access Points', '/app/network/access-points'], ['wireless', 'Wireless Devices', '/app/network/wireless'], ['switches', 'Switches', '/app/network/switches'], ['fiber', 'Fiber Devices', '/app/network/fiber'],
   ['topology', 'Network Topology', '/app/network/topology'], ['discovery', 'Device Discovery', '/app/network/discovery'], ['groups', 'Device Groups', '/app/network/groups'],
-  ['alerts', 'Device Alerts', '/app/network/alerts'], ['logs', 'Device Activity Logs', '/app/network/logs']];
+  ['alerts', 'Device Alerts', '/app/network/alerts'], ['logs', 'Device Activity Logs', '/app/network/logs'],
+  ['rusers', 'Router Users', '/app/network/router-users'], ['sessions', 'Live Sessions', '/app/network/sessions'], ['cmds', 'Router Commands', '/app/network/commands']];
 const MAC = /^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$/;
 const IPV4 = /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}$/;
 const clean = (v, max = 200) => String(v ?? '').trim().slice(0, max);
@@ -226,11 +228,11 @@ ${kv('Credentials', d.cred_enc ? `${d.cred_user} / ******** (${t('encrypted')})`
 `;
   function connectPage(req, shown) {
     const t = req.i.t, c = ctx(req), base = `${req.protocol}://${req.get('host')}`;
-    const tk = companyToken(req.user.company_id, false), sc = routerScript(base, tk);
+    const tk = companyToken(req.user.company_id, false), sc = RS.fullScript(base, tk);
     const n = q1('SELECT COUNT(*) AS n FROM devices WHERE company_id=?', req.user.company_id).n;
     return page(c, 'Connect MikroTik', sub(req, 'discovery', `<div class="card"><h3>${t('Connect your MikroTik (automatic)')}</h3>
 <ol><li>${t('Open WinBox or SSH and open New Terminal on your MikroTik.')}</li><li>${t('Copy the script below and paste it into the terminal, then press Enter.')}</li><li>${t('Within a minute the router appears in the list by itself, and devices it sees as neighbors are added as well. Status comes from the heartbeat the router sends every 5 minutes.')}</li></ol>
-<textarea id="mcscript" readonly rows="14" style="width:100%;font-family:monospace;direction:ltr;text-align:left" onfocus="this.select()">${esc(sc)}</textarea>
+<textarea id="mcscript" readonly rows="16" style="width:100%;font-family:monospace;direction:ltr;text-align:left" onfocus="this.select()">${esc(sc)}</textarea>
 <p><button class="btn" type="button" onclick="var e=document.getElementById('mcscript');e.select();navigator.clipboard&&navigator.clipboard.writeText(e.value);this.textContent='${esc(t('Copied'))}'">${t('Copy script')}</button></p>
 <p class="mut">${t('The script contains the private link key of this client. Do not share it. If it leaks, generate a new one: the old script stops working immediately.')}</p>
 <form method="post" action="/app/network/connect/rotate" onsubmit="return confirm('${esc(t('The old script will stop working. Continue?'))}')">${csrfField(c)}<button class="btn">${t('Generate new key')}</button></form>
@@ -241,6 +243,7 @@ ${kv('Credentials', d.cred_enc ? `${d.cred_user} / ******** (${t('encrypted')})`
   app.get('/app/network/connect', needAdmin, gate, (req, res) => go(res, '/app/network/discovery'));
   app.post('/app/network/connect/rotate', needAdmin, gate, (req, res) => { companyToken(req.user.company_id, true); audit(req, 'device_link_key_rotated', ''); go(res, '/app/network/discovery', 'ok', req.i.t('Saved')); });
 
+  RS.init(h, P);
   const hits = new Map();
   const tooMany = (k, max) => { const n = Date.now(), a = (hits.get(k) || []).filter((x) => n - x < 60000); a.push(n); hits.set(k, a); if (hits.size > 5000) hits.clear(); return a.length > max; };
   const MACRE = /^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/;

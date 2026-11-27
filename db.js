@@ -90,6 +90,17 @@ CREATE TABLE IF NOT EXISTS devices(
   status TEXT NOT NULL DEFAULT 'unknown', last_check TEXT, last_ok TEXT, last_fail TEXT, fails INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now')));
 CREATE INDEX IF NOT EXISTS idx_devices_company ON devices(company_id);
+CREATE TABLE IF NOT EXISTS router_items(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE, device_id INTEGER NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL, item_key TEXT NOT NULL, name TEXT DEFAULT '', profile TEXT DEFAULT '', service TEXT DEFAULT '', address TEXT DEFAULT '', mac TEXT DEFAULT '', uptime TEXT DEFAULT '',
+  disabled INTEGER NOT NULL DEFAULT 0, comment TEXT DEFAULT '', batch TEXT DEFAULT '0', seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(company_id, device_id, kind, item_key));
+CREATE INDEX IF NOT EXISTS idx_router_items_co ON router_items(company_id, kind);
+CREATE TABLE IF NOT EXISTS router_cmds(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE, device_id INTEGER NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+  action TEXT NOT NULL, target TEXT NOT NULL, arg TEXT DEFAULT '', status TEXT NOT NULL DEFAULT 'queued', result TEXT DEFAULT '', created_by TEXT DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')), sent_at TEXT, done_at TEXT);
+CREATE INDEX IF NOT EXISTS idx_router_cmds_dev ON router_cmds(device_id, status);
 `);
 
   for (const [col, def] of [['billing_period', "TEXT DEFAULT 'monthly'"], ['enroll_hash', "TEXT DEFAULT ''"], ['enroll_enc', "TEXT DEFAULT ''"], ['enroll_at', 'TEXT'], ['price_paid', 'REAL DEFAULT 0'], ['currency', "TEXT DEFAULT 'EGP'"], ['sub_start', 'TEXT'], ['limit_overrides', "TEXT DEFAULT '{}'"], ['logo', "TEXT DEFAULT ''"], ['legal_name', "TEXT DEFAULT ''"], ['phone2', "TEXT DEFAULT ''"], ['website', "TEXT DEFAULT ''"], ['tax_no', "TEXT DEFAULT ''"], ['description', "TEXT DEFAULT ''"], ['stamp', "TEXT DEFAULT ''"], ['brand_color', "TEXT DEFAULT '#2563eb'"], ['brand_color2', "TEXT DEFAULT '#0f172a'"], ['invoice_footer', "TEXT DEFAULT ''"], ['support_info', "TEXT DEFAULT ''"], ['logo_h', 'INTEGER DEFAULT 48'], ['suspended_until', 'TEXT']]) {
