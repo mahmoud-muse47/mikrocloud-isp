@@ -32,6 +32,7 @@ function createApp(db, opts = {}) {
   const app = express();
   app.disable('x-powered-by');
   app.set('trust proxy', opts.trustProxy ? 1 : false);
+  app.use((req, res, next) => { const h = opts.trustProxy && req.headers['cf-connecting-ip']; if (h && /^[0-9a-fA-F:.]{3,45}$/.test(h)) Object.defineProperty(req, 'ip', { value: h }); next(); });
   app.use(express.urlencoded({ extended: false, limit: '400kb' }));
   const ipHits = new Map(); // simple per-IP login throttle
 
