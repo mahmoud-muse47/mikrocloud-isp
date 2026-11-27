@@ -95,6 +95,7 @@ function createApp(db, opts = {}) {
     }
     next();
   });
+  for (const pn of ['id', 'iid', 'rid', 'uid']) app.param(pn, (req, res, next, v) => (/^\d{1,9}$/.test(v) ? next() : res.status(404).send('Not found')));
   const ctx = (req) => ({ i: req.i, user: req.user, csrf: req.csrf, flash: req.flash, path: req.originalUrl });
   const setFlash = (res, type, msg) => res.append('Set-Cookie', `flash=${encodeURIComponent(JSON.stringify({ type, msg }))}; Path=/; HttpOnly; SameSite=Lax; Max-Age=30`);
   const go = (res, url, type, msg) => { if (type) setFlash(res, type, msg); res.redirect(303, url); };
