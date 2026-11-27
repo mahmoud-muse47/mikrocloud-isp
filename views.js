@@ -36,9 +36,16 @@ form.loading .spin{display:inline-block}@keyframes s{to{transform:rotate(360deg)
 .side a:hover{background:#eff6ff;border-color:var(--p);color:var(--p)}.side a:active{transform:translateY(2px);box-shadow:0 0 0 #cbd5e1}
 .side summary{display:block;list-style:none;cursor:pointer;padding:11px 14px;margin:0 0 9px;border-radius:10px;background:linear-gradient(#fff,#f1f5f9);border:1px solid #cbd5e1;box-shadow:0 2px 0 #cbd5e1,0 4px 10px rgba(15,23,42,.08);color:var(--tx);font-size:15px;font-weight:500;line-height:1.3}.side summary::-webkit-details-marker{display:none}.side summary:after{content:'\\25BE';float:inline-end}.side details:not([open]) summary:after{content:'\\25B8'}.side details a{margin-inline-start:18px;font-size:14px}.side a.on{background:var(--p);border-color:var(--p);color:#fff;box-shadow:0 2px 0 #1d4ed8,0 4px 10px rgba(37,99,235,.35)}.side a:last-child{margin-bottom:0}
 .cl{--p:#16a34a}.cl header{background:#14532d}.cl a{color:#15803d}.cl header a{color:#d1fae5}.cl .side a{color:var(--tx)}.cl .side a:hover{background:#f0fdf4}.cl .side a.on,.cl .side a.on:hover{color:#fff;box-shadow:0 2px 0 #15803d,0 4px 10px rgba(22,163,74,.35)}.cl .side summary{color:var(--tx)}.cl button:not(.sec):not(.bad),.cl .btn:not(.sec){background:#16a34a}.cl.login{background:linear-gradient(135deg,#052e16,#166534)}
+.mo{position:fixed;inset:0;background:rgba(15,23,42,.55);display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px}.mb{background:#fff;border-radius:14px;border:2px solid #dc2626;max-width:440px;width:100%;padding:26px 24px;text-align:center;box-shadow:0 20px 50px rgba(0,0,0,.35);font-size:17px;line-height:1.6;color:#b91c1c;font-weight:600}.mb .bt{margin-top:18px;display:flex;gap:10px;justify-content:center}.mb button{min-width:100px;font-size:16px;background:#dc2626;color:#fff;border:0;border-radius:9px;padding:9px 18px;cursor:pointer}.mb button.sec{background:#e2e8f0;color:#334155}.mb.ok{border-color:#16a34a;color:#166534}.mb.ok button{background:#16a34a}.mb.warn{border-color:#d97706;color:#b45309}.mb.warn button{background:#d97706}
 @media(max-width:800px){.shell{grid-template-columns:1fr}.side{grid-column:1;grid-row:1;position:static}.shell main{grid-row:2;grid-column:1}}`;
 const js = `document.addEventListener('submit',e=>{e.target.classList&&e.target.classList.add('loading')});
 (function(){var s=document.getElementById('side');if(!s)return;var p=location.pathname,best=null;s.querySelectorAll('a').forEach(function(a){var h=a.getAttribute('href');if((p===h||(h.length>5&&p.indexOf(h)===0))&&(!best||h.length>=best.getAttribute('href').length))best=a});if(best)best.className='on'})();
+
+(function(){var last=null,okFlag=false;document.addEventListener('submit',function(e){last=e.target},true);
+function ar(){return document.documentElement.lang==='ar'}
+window.mcModal=function(msg,yes,cls){var o=document.createElement('div');o.className='mo';var b=document.createElement('div');b.className='mb '+(cls||'');var m=document.createElement('div');m.textContent=msg;var t=document.createElement('div');t.className='bt';var ok=document.createElement('button');ok.type='button';ok.textContent=ar()?'موافق':'OK';t.appendChild(ok);if(yes){var c=document.createElement('button');c.type='button';c.className='sec';c.textContent=ar()?'إلغاء':'Cancel';c.onclick=function(){o.remove()};t.appendChild(c)}ok.onclick=function(){o.remove();if(yes)yes()};b.appendChild(m);b.appendChild(t);o.appendChild(b);document.body.appendChild(o);ok.focus()};
+window.confirm=function(msg){if(okFlag){okFlag=false;return true}var f=last;if(f){f.classList.remove('loading');window.mcModal(String(msg),function(){okFlag=true;if(f.requestSubmit)f.requestSubmit();else f.submit()})}return false};
+window.alert=function(msg){window.mcModal(String(msg))}})();
 function tp(id,b){var i=document.getElementById(id);i.type=i.type==='password'?'text':'password'}`;
 
 function page(ctx, title, body, nav = '') {
@@ -51,7 +58,7 @@ function page(ctx, title, body, nav = '') {
 <header><span class="brand">${esc(BRAND)}</span>${side ? '' : nav}<span class="sp"></span>
 <a href="/lang/${other}?back=${encodeURIComponent(path || '/')}">${other === 'ar' ? 'العربية' : 'English'}</a>
 ${user ? `<a href="/account">${esc(user.name)}</a><form class="inline" method="post" action="/logout"><input type="hidden" name="_csrf" value="${esc(csrf)}"><button class="sec">${t('Logout')}</button></form>` : ''}</header>
-${side ? `<div class="shell" style="--dir:${i.rtl ? 'rtl' : 'ltr'}">` : ''}<main>${flash ? `<div class="flash ${flash.type}">${esc(flash.msg)}</div>` : ''}${body}</main>${side ? `<aside class="side" id="side">${nav}</aside></div>` : ''}<script>${js}</script></body></html>`;
+${side ? `<div class="shell" style="--dir:${i.rtl ? 'rtl' : 'ltr'}">` : ''}<main>${body}</main>${side ? `<aside class="side" id="side">${nav}</aside></div>` : ''}<script>${js}</script>${flash ? `<script>mcModal(${JSON.stringify(String(flash.msg)).replace(/</g, '\\u003c')},null,${JSON.stringify(flash.type === 'err' ? '' : flash.type === 'warn' ? 'warn' : 'ok')})</script>` : ''}</body></html>`;
 }
 const csrfField = (ctx) => `<input type="hidden" name="_csrf" value="${esc(ctx.csrf)}">`;
 const infoGrid = (items) => `<div class="info">${items.map(([l, x]) => `<div><small>${esc(l)}</small><strong>${x === undefined || x === null || x === '' ? '-' : x}</strong></div>`).join('')}</div>`;
@@ -69,20 +76,20 @@ function login2fa(ctx, err) {
   const t = ctx.i.t;
   return `<!doctype html><html lang="${ctx.i.lang}" dir="${ctx.i.rtl ? 'rtl' : 'ltr'}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(BRAND)}</title><style>${css}</style></head>
 <body class="login${ctx.admin ? '' : ' cl'}"><div class="box"><div class="logo">M</div><h2 style="text-align:center;margin:4px 0 18px">${t('Two-factor authentication')}</h2>
-${err ? `<div class="flash err">${esc(err)}</div>` : ''}<form method="post" action="/login/2fa">${csrfField(ctx)}
-<label>${t('Authentication code')}</label><input name="code" required autofocus autocomplete="one-time-code" inputmode="numeric"><button style="width:100%;margin-top:14px">${t('Sign in')}</button></form></div></body></html>`;
+<form method="post" action="/login/2fa">${csrfField(ctx)}
+<label>${t('Authentication code')}</label><input name="code" required autofocus autocomplete="one-time-code" inputmode="numeric"><button style="width:100%;margin-top:14px">${t('Sign in')}</button></form></div><script>${js}</script>${err ? `<script>mcModal(${JSON.stringify(String(err)).replace(/</g, '\\u003c')},null,'')</script>` : ''}</body></html>`;
 }
 function login(ctx, err) {
   const t = ctx.i.t;
   const other = ctx.i.lang === 'ar' ? 'en' : 'ar';
   return `<!doctype html><html lang="${ctx.i.lang}" dir="${ctx.i.rtl ? 'rtl' : 'ltr'}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sign in - ${esc(BRAND)}</title><style>${css}</style></head>
 <body class="login${ctx.admin ? '' : ' cl'}"><div class="box"><div class="logo">${esc(BRAND.slice(0, 1).toUpperCase())}</div><h2 style="text-align:center;margin:4px 0 18px">${BRAND === 'MikroCloud' ? t('MikroCloud ISP Manager') : esc(BRAND)}</h2>
-${err ? `<div class="flash err">${esc(err)}</div>` : ''}
+
 <form method="post" action="/login">${csrfField(ctx)}
 <label>${t('Email or username')}</label><input name="identifier" required autofocus autocomplete="username">
 <label>${t('Password')}</label><div class="pw"><input id="pw" type="password" name="password" required autocomplete="current-password"><button type="button" class="sec" onclick="tp('pw')">${t('Show')}/${t('Hide')}</button></div>
 <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" name="remember" value="1" style="width:auto"> ${t('Remember me')}</label>
 <p style="margin:14px 0 0"><button style="width:100%">${t('Sign in')}<span class="spin"></span></button></p></form>
-<p style="text-align:center;margin-top:14px"><a href="/forgot">${t('Forgot password?')}</a> &nbsp;|&nbsp; <a href="/lang/${other}?back=/login">${other === 'ar' ? 'العربية' : 'English'}</a></p></div><script>${js}</script></body></html>`;
+<p style="text-align:center;margin-top:14px"><a href="/forgot">${t('Forgot password?')}</a> &nbsp;|&nbsp; <a href="/lang/${other}?back=/login">${other === 'ar' ? 'العربية' : 'English'}</a></p></div><script>${js}</script>${err ? `<script>mcModal(${JSON.stringify(String(err)).replace(/</g, '\\u003c')},null,${JSON.stringify('')})</script>` : ''}</body></html>`;
 }
 module.exports = { setBrand, getBrand, hostOnly, infoGrid, esc, page, csrfField, badge, field, select, login, login2fa };
