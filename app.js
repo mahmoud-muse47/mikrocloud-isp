@@ -10,6 +10,7 @@ const { init: financeInit } = require('./finance');
 const { init: vouchersInit } = require('./vouchers');
 const { init: reportsInit } = require('./reports');
 const makePortal = require('./portal');
+const makeBackup = require('./autobackup');
 const TF = require('./twofa');
 const secureInit = require('./secure');
 const { infoGrid, esc, page, csrfField, badge, field, select } = V;
@@ -115,6 +116,17 @@ function createApp(db, opts = {}) {
   const deny = (req, res, code = 403) => res.status(code).send(page(ctx(req), 'Error', `<div class="card"><h3>${req.i.t(code === 404 ? 'Not found' : 'Forbidden')}</h3></div>`));
 
   // ---- guards
+  // Two-factor is required for the super admin when REQUIRE_SUPER_2FA=1. A super admin without 2FA can still sign in with the
+  // password, but can only reach the 2FA setup page (and logout) until it is enabled, so nobody gets locked out.
+  const requireSuper2fa = opts.requireSuper2fa !== undefined ? opts.requireSuper2fa : process.env.REQUIRE_SUPER_2FA === '1';
+  app.use((req, res, next) => {
+    const u = req.user;
+    if (!requireSuper2fa || !u || u.role !== 'super_admin' || u.totp_on) return next();
+    const p = req.path;
+    if (p.startsWith('/account/2fa') || p === '/logout' || p.startsWith('/lang/') || p === '/health') return next();
+    if (req.method !== 'GET') return res.status(403).send('Two-factor authentication required');
+    return go(res, '/account/2fa', 'warn', req.i.t('Two-factor authentication is required for the super admin. Set it up below to continue.'));
+  });
   const needLogin = (req, res, next) => (req.user ? next() : res.redirect(303, '/login'));
   const needSuper = (req, res, next) => (req.user && req.user.role === 'super_admin' ? next() : req.user ? deny(req, res) : res.redirect(303, '/admin/login'));
   const needCompany = (req, res, next) => (req.user && req.user.company_id ? next() : req.user ? deny(req, res) : res.redirect(303, '/login'));
@@ -127,7 +139,7 @@ function createApp(db, opts = {}) {
   const FIN = financeInit({ app, db, q, q1, run, audit, ctx, go, deny, needAdmin, nav: (req) => nav(req) });
   vouchersInit({ app, db, q, q1, run, audit, ctx, go, deny, needAdmin, nav: (req) => nav(req), P });
   const S = secureInit(q1, run); S.setQ(q); try { S.migrate(); } catch (e) { console.error('secure migrate', e.message); }
-  TF.init({ S, app, q1, run, audit, ctx, go, needLogin, verifyPassword, nav: (req) => nav(req) });
+  TF.init({ requireSuper2fa, S, app, q1, run, audit, ctx, go, needLogin, verifyPassword, nav: (req) => nav(req) });
   const RPT = reportsInit({ app, q, q1, ctx, needAdmin, deny, nav: (req) => nav(req), P });
   const D = devicesInit({ S, app, db, q, q1, run, audit, ctx, go, deny, needAdmin, nav: (req) => nav(req) }, P);
 
@@ -286,7 +298,7 @@ ${field(t('Current password'), 'current', '', { type: 'password', req: true })}$
   function nav(req) {
     const t = req.i.t, u = req.user;
     if (!u) return '';
-    if (u.role === 'super_admin') return `<a href="/admin">${t('Dashboard')}</a><a href="/admin/companies">${t('Companies')}</a><a href="/admin/plans">${t('Subscription Plans & Pricing')}</a><a href="/admin/payment-methods">${t('Payment Methods')}</a><a href="/admin/payments">${t('Payments')}</a><a href="/admin/audit">${t('Audit log')}</a><a href="/admin/security">${t('Security')}</a><a href="/admin/system">${t('System')}</a>`;
+    if (u.role === 'super_admin') return `<a href="/admin">${t('Dashboard')}</a><a href="/admin/companies">${t('Companies')}</a><a href="/admin/plans">${t('Subscription Plans & Pricing')}</a><a href="/admin/payment-methods">${t('Payment Methods')}</a><a href="/admin/payments">${t('Payments')}</a><a href="/admin/audit">${t('Audit log')}</a><a href="/admin/security">${t('Security')}</a><a href="/admin/backups">${t('Backups')}</a><a href="/admin/system">${t('System')}</a>`;
     const P0 = req.path || '';
     const grp = (label, items) => `<details class="grp"${items.some(([, u]) => P0 === u || (u.length > 5 && P0.startsWith(u + '/')) || P0 === u) ? ' open' : ''}><summary>${t(label)}</summary>${items.map(([l, u]) => `<a href="${u}">${t(l)}</a>`).join('')}</details>`;
     let h = `<a href="/app">${t('Dashboard')}</a>`;
@@ -315,7 +327,9 @@ ${field(t('Current password'), 'current', '', { type: 'password', req: true })}$
     res.send(page(c, 'Dashboard', `${rrCard}<div class="grid">${stat(comps.length, 'Total companies')}${stat(cnt('active'), 'Active companies')}${stat(cnt('trial'), 'Trial companies')}${stat(cnt('suspended'), 'Suspended companies')}${stat(cnt('expired'), 'Expired subscriptions')}${stat(customers, 'Total customers')}</div>
 <div class="card" style="margin-top:16px"><h3>${t('Recent activity')}</h3><div class="tbl"><table>${recent.map((a) => `<tr><td>${esc(a.ts)}</td><td>${esc(a.cname || '-')}</td><td>${esc(a.action)}</td><td>${esc(a.detail)}</td></tr>`).join('') || `<tr><td>${t('No results')}</td></tr>`}</table></div></div>`, nav(req)));
   });
-  PT.init({ app, db, audit, ctx, go, needSuper, nav: (req) => nav(req) });
+  const AB = makeBackup({ db, S, audit });
+  if (!opts.noBackupTimer) AB.start();
+  PT.init({ app, db, audit, ctx, go, needSuper, nav: (req) => nav(req), AB, requireSuper2fa });
   app.get('/admin/audit', needSuper, (req, res) => {
     const rows = q('SELECT a.*, c.name cname, u.username FROM audit_log a LEFT JOIN companies c ON c.id=a.company_id LEFT JOIN users u ON u.id=a.user_id ORDER BY a.id DESC LIMIT 200');
     res.send(page(ctx(req), 'Audit', `<div class="card tbl"><table><tr><th>Time</th><th>Company</th><th>User</th><th>Action</th><th>Detail</th><th>IP</th></tr>${rows.map((a) => `<tr><td>${esc(a.ts)}</td><td>${esc(a.cname || '-')}</td><td>${esc(a.username || '-')}</td><td>${esc(a.action)}</td><td>${esc(a.detail)}</td><td>${esc(a.ip)}</td></tr>`).join('')}</table></div>`, nav(req)));

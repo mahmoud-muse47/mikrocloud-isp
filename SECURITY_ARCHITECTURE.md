@@ -12,7 +12,7 @@ Engineering references used: OWASP Top 10, ASVS, API Security Top 10, NIST CSF 2
 | Login throttle + account lockout | DONE |
 | Session cookies HttpOnly, Secure, SameSite; expiry; rotation at login | DONE |
 | Device and session history, login history | DONE (Account page) |
-| TOTP 2FA with recovery codes | DONE for all users; not forced on super admin |
+| TOTP 2FA with recovery codes | DONE for all users; forced for super admin when REQUIRE_SUPER_2FA=1 |
 | Login notifications | NOT DONE (no email/SMS sending) |
 | Passkeys | NOT DONE |
 | Encryption at rest, AES-256-GCM (device credentials, 2FA secrets) | DONE, tested |
@@ -25,7 +25,8 @@ Engineering references used: OWASP Top 10, ASVS, API Security Top 10, NIST CSF 2
 | Security & System Monitoring page | DONE (Admin > Security): failed/successful logins, suspicious IPs, locked accounts, open reset requests, privilege and config changes, control status. Not available: API auth failures, router failures, webhook failures, scan results (those features do not exist yet) |
 | Central audit log (user, tenant, action, IP, time) | DONE; no correlation ID; not tamper-proof |
 | WAF, DDoS, bot protection | NOT DONE in the app: depends on Cloudflare/host. Rate limiting only on login/forgot |
-| Encrypted, automated, off-site backups | NOT DONE (see BACKUP_AND_RECOVERY.md) |
+| Encrypted automated backups with integrity check | DONE, tested (restore into a fresh DB in tests). Off-site push to a private GitHub repo is coded and tested against a stub; needs a token to go live. No immutable storage |
+| Two-factor required for the Super Admin | DONE, tested: REQUIRE_SUPER_2FA=1. Without 2FA the super admin can sign in but only reach the 2FA setup page; once enrolled it cannot be switched off |
 | AI security rules | No AI feature exists. Rules for later: tool allowlist, tenant-scoped data only, no raw SQL/RouterOS from model output, human approval for sensitive actions, all actions through normal authorization |
 
 ## Branding

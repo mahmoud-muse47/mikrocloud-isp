@@ -7,3 +7,8 @@ module.exports = {
   'Open reset requests': 'طلبات استعادة مفتوحة', 'Device alerts (24h)': 'تنبيهات الأجهزة (24 ساعة)', 'Recent failed logins': 'آخر محاولات الدخول الفاشلة',
   'Suspicious IPs (5+ failures in 24h)': 'عناوين مشبوهة (5 فشل أو أكثر خلال 24 ساعة)', 'Privilege and configuration changes': 'تغييرات الصلاحيات والإعدادات',
 };
+Object.assign(module.exports, {
+  'Backups': 'النسخ الاحتياطي', 'Encrypted backups': 'نسخ احتياطية مشفرة', 'Back up now': 'نسخ احتياطي الآن', 'Download': 'تحميل', 'Time': 'الوقت', 'Type': 'النوع', 'Size': 'الحجم', 'Checked': 'الفحص',
+  'Off-site copy': 'نسخة خارجية', 'on': 'مفعلة', 'off (not configured)': 'غير مفعلة', 'How to restore': 'طريقة الاستعادة', 'Backup created and checked': 'تم إنشاء النسخة وفحصها', 'Backup created but the check failed': 'تم إنشاء النسخة لكن الفحص فشل',
+  'Two-factor authentication is required for the super admin. Set it up below to continue.': 'المصادقة الثنائية مطلوبة لمدير المنصة. فعّلها بالأسفل للمتابعة.', 'Two-factor cannot be turned off for the super admin': 'لا يمكن إيقاف المصادقة الثنائية لمدير المنصة',
+});

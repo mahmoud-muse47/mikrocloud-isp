@@ -61,6 +61,7 @@ function init(h) {
   });
   app.post('/account/2fa/disable', needLogin, (req, res) => {
     const t = req.i.t, u = fresh(req);
+    if (u.role === 'super_admin' && h.requireSuper2fa) return go(res, '/account/2fa', 'err', t('Two-factor cannot be turned off for the super admin'));
     if (!verifyPassword(String(req.body.password || ''), u.password_hash) || !(verifyTotp(S.dec(u.totp_secret), req.body.code) || useRecovery(q1, run, u, req.body.code))) { audit(req, '2fa_disable_failed'); return go(res, '/account/2fa', 'err', t('Invalid code')); }
     run("UPDATE users SET totp_on=0, totp_secret='', totp_recovery='' WHERE id=?", u.id); audit(req, '2fa_disabled');
     go(res, '/account/2fa', 'ok', t('Saved'));

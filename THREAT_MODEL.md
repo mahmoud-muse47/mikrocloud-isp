@@ -21,7 +21,7 @@ Severity and likelihood are my estimates (H/M/L).
 | 14 | Payment fraud | Fake payment record | payments | H | L | Manual approval by super admin, no online gateway | manual | Gateways not integrated |
 | 15 | Webhook forgery | Fake payment callback | none | H | n/a | No webhooks exist | n/a | Must sign/verify when gateways are added |
 | 16 | Router takeover / unauthorized MikroTik commands | Run commands on client routers | devices | H | n/a | Real RouterOS API not implemented | n/a | Command allowlist + preview + audit needed when built |
-| 17 | Backup theft | Export file leaked | backup.js | H | L | None automatic: export is plain JSON | none | NOT mitigated: exports are not encrypted yet |
+| 17 | Backup theft | Backup file leaked | autobackup, backup.js | H | L | Automatic backups are AES-256-GCM with a key not stored in the DB; downloads stay encrypted | backup2fa.test.js | Plain `backup.js export` is still unencrypted; DATA_KEY loss or leak breaks the protection |
 | 18 | Database compromise | Neon credentials leaked | DB | H | L | Secrets only in env, TLS to Neon | review | Neon account security is the user's |
 | 19 | Insider threat | Employee exports data | employees | M | M | Role permissions, audit log | tests | Audit log is not tamper-proof (same DB) |
 | 20 | Supply chain | Malicious npm package | build | M | L | Few dependencies, lockfile | npm audit run manually | No automated scanner |

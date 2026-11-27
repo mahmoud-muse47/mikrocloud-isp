@@ -3,7 +3,7 @@
 Scope: my own testing of the deployed code (https://mikrocloud-isp.onrender.com) and automated tests. Not an independent penetration test. Not certified.
 
 ## Tests run (all passed at last run)
-95 tests locally (89 earlier + 6 portal/host tests), plus the same 24 security tests against Postgres. Categories: cross-tenant access, SQL injection, XSS, CSRF, session handling, brute force and lockout, privilege escalation, upload spoofing, password reset, encryption round trip and key rotation, host spoofing, portal separation.
+100 tests locally (95 + 5 backup/2FA tests), plus the same 24 security tests against Postgres. Categories: cross-tenant access, SQL injection, XSS, CSRF, session handling, brute force and lockout, privilege escalation, upload spoofing, password reset, encryption round trip and key rotation, host spoofing, portal separation.
 
 ## Findings fixed (earlier rounds)
 | Finding | Sev | Fix | Retest |
@@ -20,8 +20,8 @@ Scope: my own testing of the deployed code (https://mikrocloud-isp.onrender.com)
 | Finding | Sev | Status |
 |---|---|---|
 | CSP allows inline styles and inline event handlers | L-M | open |
-| Backups not encrypted/automated/off-site | M | open |
-| Super admin 2FA not enforced | M | open (recommend enabling now) |
+| Backups not encrypted/automated | M | fixed (encrypted, automatic, checked); off-site copy and full live restore test still open |
+| Super admin 2FA not enforced | M | fixed when REQUIRE_SUPER_2FA=1 is set |
 | Argon2id not used (scrypt instead) | L | open |
 | No general rate limit beyond login | M | open |
 | DATA_KEY must be set in env or key derives from DATABASE_URL | M | being fixed this release (env var set) |

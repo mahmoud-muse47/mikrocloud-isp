@@ -39,6 +39,8 @@ module.exports = function secure(q1, run) {
     }
     if (envKey && !q(`SELECT 1 FROM devices WHERE cred_enc<>'' AND cred_enc NOT LIKE 'v2.%'`).length) run("DELETE FROM app_settings WHERE k='cred_key'");
   };
+  // purpose-specific key derived from the master key (backups use their own)
+  const subkey = (info) => Buffer.from(crypto.hkdfSync('sha256', envKey || dbKey(), Buffer.from('mikrocloud-sub'), Buffer.from(info), 32));
   let q = () => []; const setQ = (f) => { q = f; };
-  return { enc, dec, migrate, setQ, protectedByEnv: !!envKey };
+  return { enc, dec, subkey, migrate, setQ, protectedByEnv: !!envKey };
 };

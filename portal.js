@@ -49,7 +49,7 @@ module.exports = function portal(opts = {}) {
   };
   const loginAllowed = (req, u) => !((req.portal === 'admin' && u.role !== 'super_admin') || (req.portal === 'client' && u.role === 'super_admin') || (req.tenantId && u.company_id !== req.tenantId));
 
-  const init = ({ app, db, audit, ctx, go, needSuper, nav }) => {
+  const init = ({ app, db, audit, ctx, go, needSuper, nav, AB, requireSuper2fa }) => {
     bind(db); loadBrand();
     const dom = (req) => req.i.t;
     // ---- System: brand + domain configuration status
@@ -105,6 +105,26 @@ module.exports = function portal(opts = {}) {
       audit(req, 'domain_removed', String(req.params.rid), co.id); go(res, `/admin/companies/${co.id}/domains`, 'ok', req.i.t('Saved'));
     });
 
+    // ---- Encrypted backups
+    app.get('/admin/backups', needSuper, (req, res) => {
+      const t = req.i.t, c = ctx(req), rows = AB.list();
+      res.send(page(c, 'Backups', `<div class="card"><h3>${t('Encrypted backups')}</h3><p style="color:var(--mut)">${t('A backup is made automatically every 24 hours, encrypted with a key derived from DATA_KEY, and the last 14 are kept. Each one is checked right after it is made (decrypt, parse, row counts). Files are downloaded still encrypted.')}</p>
+<p style="color:var(--mut)">${t('Off-site copy')}: ${process.env.BACKUP_GITHUB_REPO && process.env.BACKUP_GITHUB_TOKEN ? t('on') : t('off (not configured)')}</p>
+<form method="post" action="/admin/backups/run">${csrfField(c)}<button>${t('Back up now')}</button></form></div>
+<div class="card tbl"><table><tr><th>#</th><th>${t('Time')} (UTC)</th><th>${t('Type')}</th><th>${t('Size')}</th><th>${t('Checked')}</th><th>${t('Off-site copy')}</th><th></th></tr>${rows.map((r) => `<tr><td>${r.id}</td><td>${esc(r.created_at)}</td><td>${esc(r.kind)}</td><td>${Math.round(r.size / 1024)} KB</td><td>${r.verified ? 'OK' : '<b style="color:var(--bad)">!</b>'} <span style="color:var(--mut)">${esc(r.note)}</span></td><td>${esc(r.offsite || '-')}</td><td><a href="/admin/backups/${r.id}/download">${t('Download')}</a></td></tr>`).join('') || `<tr><td colspan="7">${t('No results')}</td></tr>`}</table></div>
+<div class="card"><h3>${t('How to restore')}</h3><p style="color:var(--mut)">1) ${t('Download the backup file.')} 2) <code>DATA_KEY=... node src/backup.js decrypt &lt; file.mcb &gt; backup.json</code> 3) <code>DATABASE_URL=... node src/backup.js import &lt; backup.json</code> ${t('(into an empty database)')}. ${t('Keep a copy of DATA_KEY somewhere safe, without it a backup cannot be opened.')}</p></div>`, nav(req)));
+    });
+    app.post('/admin/backups/run', needSuper, async (req, res) => {
+      try { const r = await AB.create('manual'); audit(req, 'backup_manual', '#' + r.id); go(res, '/admin/backups', r.verified ? 'ok' : 'err', r.verified ? req.i.t('Backup created and checked') : req.i.t('Backup created but the check failed')); }
+      catch (e) { go(res, '/admin/backups', 'err', req.i.t('Could not save')); }
+    });
+    app.get('/admin/backups/:id/download', needSuper, (req, res) => {
+      const b = /^\d{1,9}$/.test(req.params.id) ? AB.get(Number(req.params.id)) : null;
+      if (!b) return res.status(404).send('Not found');
+      audit(req, 'backup_download', '#' + b.id);
+      res.setHeader('Content-Disposition', `attachment; filename="mikrocloud-backup-${b.id}.mcb"`); res.type('text/plain').send(b.data);
+    });
+
     // ---- Security & System Monitoring
     app.get('/admin/security', needSuper, (req, res) => {
       const t = req.i.t, c = ctx(req), day = sqlTs(Date.now() - 864e5);
@@ -117,13 +137,14 @@ module.exports = function portal(opts = {}) {
       const priv = q("SELECT ts, action, detail, ip FROM audit_log WHERE action IN ('password_changed','password_reset_issued','password_reset_done','brand_changed','domain_added','domain_verified','domain_removed','company_deleted','2fa_enabled','2fa_disabled','role_changed') ORDER BY id DESC LIMIT 15");
       const resets = n("SELECT count(*) n FROM reset_requests WHERE status='open'");
       const devAuth = n("SELECT count(*) n FROM device_alerts WHERE created_at>?", day);
+      const lb = AB.latest();
       const rec = q('SELECT ts, identifier, reason, ip FROM login_history WHERE success=0 ORDER BY id DESC LIMIT 15');
       const chk = (ok, label, note = '') => `<tr><td>${ok ? '<b style="color:var(--ok)">OK</b>' : '<b style="color:var(--bad)">!</b>'}</td><td>${t(label)}</td><td style="color:var(--mut)">${note ? t(note) : ''}</td></tr>`;
       const stat = (v, l) => `<div class="stat"><b>${v}</b><span>${t(l)}</span></div>`;
       res.send(page(c, 'Security', `<div class="grid">${stat(fails, 'Failed logins (24h)')}${stat(oks, 'Successful logins (24h)')}${stat(locked.length, 'Locked accounts')}${stat(ips.length, 'Suspicious IPs')}${stat(resets, 'Open reset requests')}${stat(devAuth, 'Device alerts (24h)')}</div>
 <div class="card tbl" style="margin-top:16px"><h3>${t('Security controls')}</h3><table>
-${chk(!!opts.secureCookies, 'Secure cookies and HSTS', 'Turn on COOKIE_SECURE')}${chk(!!process.env.DATA_KEY, 'Dedicated encryption key (DATA_KEY)', 'Set DATA_KEY in the environment')}${chk(sup.every((s) => s.totp_on), 'Two-factor on every Super Admin', 'Enable 2FA in Account')}${chk(!!(cfg.adminDomain && cfg.clientDomain), 'Separate Admin and Client domains', 'Set ADMIN_DOMAIN and CLIENT_DOMAIN after buying a domain')}${chk(cfg.forceHttps, 'HTTP to HTTPS redirect (app level)', 'Set FORCE_HTTPS=1')}
-<tr><td><b style="color:var(--warn)">?</b></td><td>${t('Automated encrypted off-site backups')}</td><td style="color:var(--mut)">${t('Not configured. Manual export only (backup.js). See BACKUP_AND_RECOVERY.md')}</td></tr>
+${chk(!!opts.secureCookies, 'Secure cookies and HSTS', 'Turn on COOKIE_SECURE')}${chk(!!process.env.DATA_KEY, 'Dedicated encryption key (DATA_KEY)', 'Set DATA_KEY in the environment')}${chk(sup.every((s) => s.totp_on), 'Two-factor on every Super Admin', 'Enable 2FA in Account')}${chk(!!requireSuper2fa, 'Two-factor required for Super Admin', 'Set REQUIRE_SUPER_2FA=1')}${chk(!!(cfg.adminDomain && cfg.clientDomain), 'Separate Admin and Client domains', 'Set ADMIN_DOMAIN and CLIENT_DOMAIN after buying a domain')}${chk(cfg.forceHttps, 'HTTP to HTTPS redirect (app level)', 'Set FORCE_HTTPS=1')}
+${chk(!!lb && !!lb.verified && Date.now() - Date.parse(lb.created_at.replace(' ', 'T') + 'Z') < 36 * 3600e3, 'Encrypted backup in the last 36 hours, checked', lb ? 'Last: ' + lb.created_at : 'No backup yet')}${chk(!!(process.env.BACKUP_GITHUB_REPO && process.env.BACKUP_GITHUB_TOKEN), 'Off-site backup copy', 'Needs BACKUP_GITHUB_REPO and BACKUP_GITHUB_TOKEN')}
 <tr><td><b style="color:var(--warn)">?</b></td><td>${t('Vulnerability scan results')}</td><td style="color:var(--mut)">${t('No scanner connected. Dependency audit is run manually.')}</td></tr></table></div>
 <div class="card tbl"><h3>${t('Suspicious IPs (5+ failures in 24h)')}</h3><table>${ips.map((r) => `<tr><td>${esc(r.ip)}</td><td>${r.n}</td></tr>`).join('') || `<tr><td>${t('No results')}</td></tr>`}</table></div>
 <div class="card tbl"><h3>${t('Locked accounts')}</h3><table>${locked.map((r) => `<tr><td>${esc(r.username)}</td><td>${esc(sqlTs(r.locked_until))}</td></tr>`).join('') || `<tr><td>${t('No results')}</td></tr>`}</table></div>

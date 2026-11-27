@@ -4,8 +4,13 @@
 //   DATABASE_URL=postgres://... node backup.js import  < backup.json   (target DB must be empty or fresh)
 // Plain pg_dump / pg_restore also work on the same database.
 const { open } = require('./db');
-const TABLES = ['companies', 'users', 'sessions', 'login_history', 'reset_tokens', 'reset_requests', 'tenant_domains', 'customers', 'packages', 'cust_invoices', 'cust_payments', 'expenses', 'voucher_templates', 'voucher_batches', 'vouchers', 'audit_log', 'plans', 'invoices', 'payment_methods', 'payments', 'plan_requests', 'devices', 'device_alerts', 'device_groups', 'app_settings', 'deleted_companies'];
+const TABLES = require('./tables');
 const url = process.env.DATABASE_URL;
+if (process.argv[2] === 'decrypt') {
+  // node backup.js decrypt < file.mcb > backup.json   (needs the same DATA_KEY the backup was made with)
+  const { decryptBackup } = require('./autobackup');
+  const ch = []; process.stdin.on('data', (c) => ch.push(c)); process.stdin.on('end', () => { try { process.stdout.write(decryptBackup(Buffer.concat(ch).toString('utf8').trim(), process.env.DATA_KEY || process.env.DATABASE_URL || '')); } catch (e) { console.error('Cannot decrypt:', e.message); process.exit(1); } });
+} else {
 if (!url) { console.error('Set DATABASE_URL'); process.exit(1); }
 const db = open(url);
 const mode = process.argv[2];
@@ -34,3 +39,4 @@ if (mode === 'export') {
   });
 } else { console.error('Usage: node backup.js export|import'); process.exit(1); }
 if (mode === 'export') db.close();
+}
