@@ -29,7 +29,7 @@ function useRecovery(q1, run, u, code) {
 }
 
 function init(h) {
-  const { app, q1, run, audit, ctx, go, needLogin, verifyPassword, nav } = h;
+  const { S, app, q1, run, audit, ctx, go, needLogin, verifyPassword, nav } = h;
   const qr = (text) => { const m = qrcode(0, 'M'); m.addData(text); m.make(); return m.createSvgTag({ cellSize: 4, margin: 2, scalable: true }); };
   const fresh = (req) => q1('SELECT * FROM users WHERE id=?', req.user.id);
 
@@ -39,7 +39,7 @@ function init(h) {
     if (u.totp_on) {
       body = `<p>${t('Two-factor authentication is on')}</p><form method="post" action="/account/2fa/disable">${csrfField(c)}<div class="row">${field(t('Current password'), 'password', '', { type: 'password', req: true })}${field(t('Authentication code'), 'code', '', { req: true })}</div><p><button class="bad">${t('Turn off two-factor authentication')}</button></p></form>`;
     } else if (u.totp_secret) {
-      const uri = `otpauth://totp/MikroCloud:${encodeURIComponent(u.username)}?secret=${u.totp_secret}&issuer=MikroCloud&digits=6&period=30`;
+      const uri = `otpauth://totp/MikroCloud:${encodeURIComponent(u.username)}?secret=${S.dec(u.totp_secret)}&issuer=MikroCloud&digits=6&period=30`;
       body = `<p>${t('Scan the QR code with an authenticator app (Google Authenticator, Microsoft Authenticator, Authy), then enter the 6-digit code.')}</p><div style="max-width:200px;direction:ltr">${qr(uri)}</div><p class="mut" style="direction:ltr">${esc(u.totp_secret)}</p><form method="post" action="/account/2fa/enable">${csrfField(c)}<div class="row">${field(t('Authentication code'), 'code', '', { req: true })}</div><p><button>${t('Confirm and turn on')}</button></p></form>`;
     } else {
       body = `<p>${t('Add a second step at sign-in using an authenticator app. Optional.')}</p><form method="post" action="/account/2fa/start">${csrfField(c)}<p><button>${t('Set up two-factor authentication')}</button></p></form>`;
@@ -47,12 +47,12 @@ function init(h) {
     res.send(page(c, 'Two-factor authentication', `<div class="card"><h3>${t('Two-factor authentication')}</h3>${body}</div>`, nav(req)));
   });
   app.post('/account/2fa/start', needLogin, (req, res) => {
-    const u = fresh(req); if (!u.totp_on) run("UPDATE users SET totp_secret=?, totp_on=0 WHERE id=?", newSecret(), u.id);
+    const u = fresh(req); if (!u.totp_on) run("UPDATE users SET totp_secret=?, totp_on=0 WHERE id=?", S.enc(newSecret()), u.id);
     res.redirect(303, '/account/2fa');
   });
   app.post('/account/2fa/enable', needLogin, (req, res) => {
     const t = req.i.t, u = fresh(req);
-    if (u.totp_on || !u.totp_secret || !verifyTotp(u.totp_secret, req.body.code)) return go(res, '/account/2fa', 'err', t('Invalid code'));
+    if (u.totp_on || !u.totp_secret || !verifyTotp(S.dec(u.totp_secret), req.body.code)) return go(res, '/account/2fa', 'err', t('Invalid code'));
     const rec = newRecovery();
     run('UPDATE users SET totp_on=1, totp_recovery=? WHERE id=?', rec.map(sha).join(','), u.id);
     audit(req, '2fa_enabled');
@@ -61,7 +61,7 @@ function init(h) {
   });
   app.post('/account/2fa/disable', needLogin, (req, res) => {
     const t = req.i.t, u = fresh(req);
-    if (!verifyPassword(String(req.body.password || ''), u.password_hash) || !(verifyTotp(u.totp_secret, req.body.code) || useRecovery(q1, run, u, req.body.code))) { audit(req, '2fa_disable_failed'); return go(res, '/account/2fa', 'err', t('Invalid code')); }
+    if (!verifyPassword(String(req.body.password || ''), u.password_hash) || !(verifyTotp(S.dec(u.totp_secret), req.body.code) || useRecovery(q1, run, u, req.body.code))) { audit(req, '2fa_disable_failed'); return go(res, '/account/2fa', 'err', t('Invalid code')); }
     run("UPDATE users SET totp_on=0, totp_secret='', totp_recovery='' WHERE id=?", u.id); audit(req, '2fa_disabled');
     go(res, '/account/2fa', 'ok', t('Saved'));
   });

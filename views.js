@@ -31,6 +31,7 @@ form.loading .spin{display:inline-block}@keyframes s{to{transform:rotate(360deg)
 .side a{display:block;padding:11px 14px;margin:0 0 9px;border-radius:10px;background:linear-gradient(#fff,#f1f5f9);border:1px solid #cbd5e1;box-shadow:0 2px 0 #cbd5e1,0 4px 10px rgba(15,23,42,.08);color:var(--tx);font-size:15px;font-weight:500;line-height:1.3;transition:transform .08s,box-shadow .08s}
 .side a:hover{background:#eff6ff;border-color:var(--p);color:var(--p)}.side a:active{transform:translateY(2px);box-shadow:0 0 0 #cbd5e1}
 .side summary{display:block;list-style:none;cursor:pointer;padding:11px 14px;margin:0 0 9px;border-radius:10px;background:linear-gradient(#fff,#f1f5f9);border:1px solid #cbd5e1;box-shadow:0 2px 0 #cbd5e1,0 4px 10px rgba(15,23,42,.08);color:var(--tx);font-size:15px;font-weight:500;line-height:1.3}.side summary::-webkit-details-marker{display:none}.side summary:after{content:'\\25BE';float:inline-end}.side details:not([open]) summary:after{content:'\\25B8'}.side details a{margin-inline-start:18px;font-size:14px}.side a.on{background:var(--p);border-color:var(--p);color:#fff;box-shadow:0 2px 0 #1d4ed8,0 4px 10px rgba(37,99,235,.35)}.side a:last-child{margin-bottom:0}
+.cl{--p:#16a34a}.cl header{background:#14532d}.cl a{color:#15803d}.cl header a{color:#d1fae5}.cl .side a{color:var(--tx)}.cl .side a:hover{background:#f0fdf4}.cl .side a.on,.cl .side a.on:hover{color:#fff;box-shadow:0 2px 0 #15803d,0 4px 10px rgba(22,163,74,.35)}.cl .side summary{color:var(--tx)}.cl button:not(.sec):not(.bad),.cl .btn:not(.sec){background:#16a34a}.cl.login{background:linear-gradient(135deg,#052e16,#166534)}
 @media(max-width:800px){.shell{grid-template-columns:1fr}.side{grid-column:1;grid-row:1;position:static}.shell main{grid-row:2;grid-column:1}}`;
 const js = `document.addEventListener('submit',e=>{e.target.classList&&e.target.classList.add('loading')});
 (function(){var s=document.getElementById('side');if(!s)return;var p=location.pathname,best=null;s.querySelectorAll('a').forEach(function(a){var h=a.getAttribute('href');if((p===h||(h.length>5&&p.indexOf(h)===0))&&(!best||h.length>=best.getAttribute('href').length))best=a});if(best)best.className='on'})();
@@ -42,7 +43,7 @@ function page(ctx, title, body, nav = '') {
   const side = !!(user && nav && user.role !== 'super_admin');
   const other = i.lang === 'ar' ? 'en' : 'ar';
   return `<!doctype html><html lang="${i.lang}" dir="${i.rtl ? 'rtl' : 'ltr'}"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)} - MikroCloud</title><style>${css}</style></head><body>
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)} - MikroCloud</title><style>${css}</style></head><body class="${user && user.role !== 'super_admin' ? 'cl' : ''}">
 <header><span class="brand">MikroCloud</span>${side ? '' : nav}<span class="sp"></span>
 <a href="/lang/${other}?back=${encodeURIComponent(path || '/')}">${other === 'ar' ? 'العربية' : 'English'}</a>
 ${user ? `<a href="/account">${esc(user.name)}</a><form class="inline" method="post" action="/logout"><input type="hidden" name="_csrf" value="${esc(csrf)}"><button class="sec">${t('Logout')}</button></form>` : ''}</header>
@@ -63,7 +64,7 @@ function select(label, name, val, options) {
 function login2fa(ctx, err) {
   const t = ctx.i.t;
   return `<!doctype html><html lang="${ctx.i.lang}" dir="${ctx.i.rtl ? 'rtl' : 'ltr'}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MikroCloud</title><style>${css}</style></head>
-<body class="login"><div class="box"><div class="logo">M</div><h2 style="text-align:center;margin:4px 0 18px">${t('Two-factor authentication')}</h2>
+<body class="login${ctx.admin ? '' : ' cl'}"><div class="box"><div class="logo">M</div><h2 style="text-align:center;margin:4px 0 18px">${t('Two-factor authentication')}</h2>
 ${err ? `<div class="flash err">${esc(err)}</div>` : ''}<form method="post" action="/login/2fa">${csrfField(ctx)}
 <label>${t('Authentication code')}</label><input name="code" required autofocus autocomplete="one-time-code" inputmode="numeric"><button style="width:100%;margin-top:14px">${t('Sign in')}</button></form></div></body></html>`;
 }
@@ -71,13 +72,13 @@ function login(ctx, err) {
   const t = ctx.i.t;
   const other = ctx.i.lang === 'ar' ? 'en' : 'ar';
   return `<!doctype html><html lang="${ctx.i.lang}" dir="${ctx.i.rtl ? 'rtl' : 'ltr'}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sign in - MikroCloud</title><style>${css}</style></head>
-<body class="login"><div class="box"><div class="logo">M</div><h2 style="text-align:center;margin:4px 0 18px">${t('MikroCloud ISP Manager')}</h2>
+<body class="login${ctx.admin ? '' : ' cl'}"><div class="box"><div class="logo">M</div><h2 style="text-align:center;margin:4px 0 18px">${t('MikroCloud ISP Manager')}</h2>
 ${err ? `<div class="flash err">${esc(err)}</div>` : ''}
 <form method="post" action="/login">${csrfField(ctx)}
 <label>${t('Email or username')}</label><input name="identifier" required autofocus autocomplete="username">
 <label>${t('Password')}</label><div class="pw"><input id="pw" type="password" name="password" required autocomplete="current-password"><button type="button" class="sec" onclick="tp('pw')">${t('Show')}/${t('Hide')}</button></div>
 <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" name="remember" value="1" style="width:auto"> ${t('Remember me')}</label>
 <p style="margin:14px 0 0"><button style="width:100%">${t('Sign in')}<span class="spin"></span></button></p></form>
-<p style="text-align:center;margin-top:14px"><a href="/lang/${other}?back=/login">${other === 'ar' ? 'العربية' : 'English'}</a></p></div><script>${js}</script></body></html>`;
+<p style="text-align:center;margin-top:14px"><a href="/forgot">${t('Forgot password?')}</a> &nbsp;|&nbsp; <a href="/lang/${other}?back=/login">${other === 'ar' ? 'العربية' : 'English'}</a></p></div><script>${js}</script></body></html>`;
 }
 module.exports = { infoGrid, esc, page, csrfField, badge, field, select, login, login2fa };

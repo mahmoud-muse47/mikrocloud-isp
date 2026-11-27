@@ -24,13 +24,7 @@ const nowSql = () => new Date().toISOString().slice(0, 19).replace('T', ' ');
 function init(h, P) {
   const { app, db, q, q1, run, audit, ctx, go, deny, needAdmin, nav } = h;
 
-  const keyOf = () => {
-    let r = q1("SELECT v FROM app_settings WHERE k='cred_key'");
-    if (!r) { run("INSERT INTO app_settings(k,v) VALUES('cred_key',?)", crypto.randomBytes(32).toString('hex')); r = q1("SELECT v FROM app_settings WHERE k='cred_key'"); }
-    return Buffer.from(r.v, 'hex');
-  };
-  const encrypt = (s) => { const iv = crypto.randomBytes(12), c = crypto.createCipheriv('aes-256-gcm', keyOf(), iv); const e = Buffer.concat([c.update(s, 'utf8'), c.final()]); return [iv, c.getAuthTag(), e].map((b) => b.toString('hex')).join('.'); };
-  const decrypt = (s) => { const [iv, tag, e] = String(s).split('.').map((x) => Buffer.from(x, 'hex')); const d = crypto.createDecipheriv('aes-256-gcm', keyOf(), iv); d.setAuthTag(tag); return Buffer.concat([d.update(e), d.final()]).toString('utf8'); };
+  const encrypt = h.S.enc, decrypt = h.S.dec;
 
   const catLabel = (d, t) => { const c = CATS.find((x) => x[0] === d.category); return c ? t(c[1]) : String(d.category).replace(/^custom:/, ''); };
   // status is derived ONLY from heartbeat results: never "online" just because a record exists

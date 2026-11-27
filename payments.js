@@ -174,7 +174,7 @@ ${rows.map((p) => `<tr><td>${esc(p.created_at)}</td><td><a href="/app/invoices/$
     return `<!doctype html><html lang="${req.i.lang}" dir="${req.i.rtl ? 'rtl' : 'ltr'}"><head><meta charset="utf-8"><title>${esc(invNo(inv))}</title><style>body{font-family:system-ui,Arial;margin:30px;color:#111}table{width:100%;border-collapse:collapse}td,th{padding:8px;border-bottom:1px solid #ddd;text-align:start}h1{margin:0}.r{float:inline-end}@media print{.np{display:none}}</style></head><body>
 <p class="np"><button onclick="print()">${t('Print / Save as PDF')}</button></p>
 <h1>MikroCloud <span class="r">${inv.status === 'paid' ? t('Receipt') : t('Invoice')}</span></h1><p>${esc(invNo(inv))}<br>${t('Date')}: ${esc(String(inv.created_at).slice(0, 10))}<br>${t('Status')}: ${esc(t(inv.status === 'paid' ? 'Paid' : 'Unpaid'))}${inv.paid_at ? ` (${esc(inv.paid_at)})` : ''}</p>
-<p><b>${t('Client')}:</b> ${esc(co.name)}<br>${esc(co.email)}</p>
+<p><b>${t('Client')}:</b> ${esc(co.name)}${co.email ? `<br>${esc(co.email)}` : ''}</p>
 <table><tr><th>${t('Description')}</th><th>${t('Period')}</th><th>${t('Amount')}</th></tr><tr><td>${esc(planName)} (${esc(inv.kind)})</td><td>${esc(inv.period)}</td><td>${esc(money(inv.amount, inv.currency))}</td></tr>
 ${inv.credit ? `<tr><td>${t('Credit')}</td><td></td><td>-${esc(money(inv.credit, inv.currency))}</td></tr>` : ''}<tr><th colspan="2">${t('Total due')}</th><th>${esc(money(payable(inv), inv.currency))}</th></tr></table>
 ${pays.map((p) => `<p>${t('Paid via')} ${esc(p.method_name)} ${p.reference ? `(${esc(p.reference)})` : ''} - ${esc(p.decided_at)}</p>`).join('')}</body></html>`;

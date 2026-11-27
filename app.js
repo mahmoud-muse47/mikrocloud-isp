@@ -10,6 +10,7 @@ const { init: financeInit } = require('./finance');
 const { init: vouchersInit } = require('./vouchers');
 const { init: reportsInit } = require('./reports');
 const TF = require('./twofa');
+const secureInit = require('./secure');
 const { infoGrid, esc, page, csrfField, badge, field, select } = V;
 
 const SESSION_TTL = 8 * 3600e3, REMEMBER_TTL = 30 * 24 * 3600e3;
@@ -34,7 +35,10 @@ function createApp(db, opts = {}) {
   app.set('trust proxy', opts.trustProxy ? 1 : false);
   app.use((req, res, next) => { const h = opts.trustProxy && req.headers['cf-connecting-ip']; if (h && /^[0-9a-fA-F:.]{3,45}$/.test(h)) Object.defineProperty(req, 'ip', { value: h }); next(); });
   app.use(express.urlencoded({ extended: false, limit: '400kb' }));
-  const ipHits = new Map(); // simple per-IP login throttle
+  try { run('DELETE FROM login_history WHERE ts<?', new Date(Date.now() - 90 * 864e5).toISOString().slice(0, 19).replace('T', ' ')); } catch { }
+  const sqlTs = (ms) => new Date(ms).toISOString().slice(0, 19).replace('T', ' ');
+  // persistent per-IP throttle: counts attempts recorded in login_history (survives restarts)
+  const tooMany = (ip) => q1('SELECT count(*) n FROM login_history WHERE ip=? AND ts>?', ip || '', sqlTs(Date.now() - 10 * 60e3)).n >= 30;
 
   const q = (sql, ...a) => db.prepare(sql).all(...a);
   const q1 = (sql, ...a) => db.prepare(sql).get(...a);
@@ -74,12 +78,15 @@ function createApp(db, opts = {}) {
     req.csrf = req.session ? req.session.csrf : (cookies.pre || '');
     if (!req.session && !cookies.pre) {
       req.csrf = crypto.randomBytes(16).toString('hex');
-      res.append('Set-Cookie', `pre=${req.csrf}; HttpOnly; SameSite=Lax; Path=/`);
+      res.append('Set-Cookie', `pre=${req.csrf}; HttpOnly; SameSite=Lax; Path=/${opts.secureCookies ? '; Secure' : ''}`);
     }
     const f = cookies.flash;
     if (f) { try { req.flash = JSON.parse(f); } catch { } res.append('Set-Cookie', 'flash=; Max-Age=0; Path=/'); }
     res.setHeader('X-Frame-Options', 'DENY');
-    res.setHeader('Content-Security-Policy', "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'");
+    const nonce = crypto.randomBytes(16).toString('base64'); req.nonce = nonce;
+    res.setHeader('Content-Security-Policy', `default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'nonce-${nonce}'; script-src-attr 'unsafe-inline'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'${opts.secureCookies ? '; upgrade-insecure-requests' : ''}`);
+    const send = res.send.bind(res);
+    res.send = (b) => send(typeof b === 'string' && b.includes('<script>') ? b.split('<script>').join(`<script nonce="${nonce}">`) : b);
     res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=()');
     res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
     if (opts.secureCookies) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
@@ -104,7 +111,7 @@ function createApp(db, opts = {}) {
 
   // ---- guards
   const needLogin = (req, res, next) => (req.user ? next() : res.redirect(303, '/login'));
-  const needSuper = (req, res, next) => (req.user && req.user.role === 'super_admin' ? next() : req.user ? deny(req, res) : res.redirect(303, '/login'));
+  const needSuper = (req, res, next) => (req.user && req.user.role === 'super_admin' ? next() : req.user ? deny(req, res) : res.redirect(303, '/admin/login'));
   const needCompany = (req, res, next) => (req.user && req.user.company_id ? next() : req.user ? deny(req, res) : res.redirect(303, '/login'));
   const can = (u, perm) => u.role === 'company_admin' || (u.role === 'employee' && u.perms.includes(perm));
   const need = (perm) => (req, res, next) => (can(req.user, perm) ? next() : deny(req, res));
@@ -114,9 +121,10 @@ function createApp(db, opts = {}) {
   paymentsInit({ app, db, q, q1, run, audit, ctx, go, deny, needSuper, needAdmin, nav: (req) => nav(req) });
   const FIN = financeInit({ app, db, q, q1, run, audit, ctx, go, deny, needAdmin, nav: (req) => nav(req) });
   vouchersInit({ app, db, q, q1, run, audit, ctx, go, deny, needAdmin, nav: (req) => nav(req), P });
-  TF.init({ app, q1, run, audit, ctx, go, needLogin, verifyPassword, nav: (req) => nav(req) });
+  const S = secureInit(q1, run); S.setQ(q); try { S.migrate(); } catch (e) { console.error('secure migrate', e.message); }
+  TF.init({ S, app, q1, run, audit, ctx, go, needLogin, verifyPassword, nav: (req) => nav(req) });
   const RPT = reportsInit({ app, q, q1, ctx, needAdmin, deny, nav: (req) => nav(req), P });
-  const D = devicesInit({ app, db, q, q1, run, audit, ctx, go, deny, needAdmin, nav: (req) => nav(req) }, P);
+  const D = devicesInit({ S, app, db, q, q1, run, audit, ctx, go, deny, needAdmin, nav: (req) => nav(req) }, P);
 
   // ---- language / root
   app.get('/lang/:l', (req, res) => {
@@ -129,13 +137,12 @@ function createApp(db, opts = {}) {
 
   // ---- auth
   app.get('/login', (req, res) => (req.user ? res.redirect(303, home(req.user)) : res.send(V.login(ctx(req), req.flash && req.flash.msg))));
+  app.get('/admin/login', (req, res) => (req.user ? res.redirect(303, home(req.user)) : res.send(V.login({ ...ctx(req), admin: true }, req.flash && req.flash.msg))));
   app.post('/login', (req, res) => {
     const t = req.i.t;
     const fail = (msg, status = 401) => res.status(status).send(V.login(ctx(req), t(msg)));
     const ident = clean(req.body.identifier, 200).toLowerCase(), pw = String(req.body.password || '');
-    const hits = (ipHits.get(req.ip) || []).filter((x) => x > Date.now() - 10 * 60e3);
-    if (hits.length >= 30) return fail('Too many attempts', 429);
-    hits.push(Date.now()); ipHits.set(req.ip, hits); if (ipHits.size > 5000) for (const [k, v] of ipHits) if (!v.some((x) => x > Date.now() - 10 * 60e3)) ipHits.delete(k);
+    if (tooMany(req.ip)) return fail('Too many attempts', 429);
     const u = q1('SELECT * FROM users WHERE lower(username)=? OR lower(email)=?', ident, ident);
     const log = (ok, reason) => run('INSERT INTO login_history(user_id,identifier,success,reason,ip) VALUES(?,?,?,?,?)', u ? u.id : null, ident, ok ? 1 : 0, reason, req.ip);
     if (!u) { verifyPassword(pw, 'scrypt$00$00'); log(0, 'unknown'); return fail('Invalid credentials'); }
@@ -167,7 +174,7 @@ function createApp(db, opts = {}) {
     const t = req.i.t, m = /(?:^|;\s*)p2=([0-9a-f]+)/.exec(req.headers.cookie || ''), p = m && pend2fa.get(m[1]);
     if (!p || p.exp < Date.now()) { if (m) pend2fa.delete(m[1]); return res.status(401).send(V.login(ctx(req), t('Session expired, sign in again'))); }
     const u = q1('SELECT * FROM users WHERE id=?', p.uid);
-    const ok = u && u.status === 'active' && (TF.verifyTotp(u.totp_secret, req.body.code) || TF.useRecovery(q1, run, u, req.body.code));
+    const ok = u && u.status === 'active' && (TF.verifyTotp(S.dec(u.totp_secret), req.body.code) || TF.useRecovery(q1, run, u, req.body.code));
     if (!ok) {
       if (++p.tries >= 5) { pend2fa.delete(m[1]); run('INSERT INTO login_history(user_id,identifier,success,reason,ip) VALUES(?,?,?,?,?)', p.uid, u ? u.username : '', 0, '2fa_locked', req.ip); return res.status(401).send(V.login(ctx(req), t('Too many attempts'))); }
       return res.status(401).send(V.login2fa(ctx(req), t('Invalid code')));
@@ -195,6 +202,30 @@ function createApp(db, opts = {}) {
   });
 
   // ---- password reset via one-time link (issued by super admin)
+  app.get('/forgot', (req, res) => {
+    const t = req.i.t, c = ctx(req);
+    res.send(page(c, 'Forgot password', `<div class="card" style="max-width:420px;margin:auto"><h3>${t('Forgot password?')}</h3><p class="mut">${t('Enter your username or email. A request is sent to your administrator, who will give you a one-time reset link.')}</p>
+<form method="post" action="/forgot">${csrfField(c)}${field(t('Email or username'), 'identifier', '', { req: true })}<p><button>${t('Send request')}</button> <a class="btn sec" href="/login">${t('Back')}</a></p></form></div>`));
+  });
+  app.post('/forgot', (req, res) => {
+    const t = req.i.t, c = ctx(req), ident = clean(req.body.identifier, 200).toLowerCase();
+    const done = () => res.send(page(c, 'Forgot password', `<div class="card" style="max-width:420px;margin:auto"><h3>${t('Request sent')}</h3><p>${t('If the account exists, your administrator has been notified and will send you a reset link.')}</p><p><a class="btn" href="/login">${t('Back')}</a></p></div>`));
+    if (tooMany(req.ip)) return res.status(429).send(page(c, 'Forgot password', `<div class="card"><h3>${t('Too many attempts')}</h3></div>`));
+    const u = ident ? q1('SELECT * FROM users WHERE lower(username)=? OR lower(email)=?', ident, ident) : null;
+    run('INSERT INTO login_history(user_id,identifier,success,reason,ip) VALUES(?,?,?,?,?)', u ? u.id : null, ident, 0, 'forgot_request', req.ip);
+    if (u && u.status === 'active' && (u.role === 'company_admin' || u.role === 'employee') && !q1("SELECT 1 x FROM reset_requests WHERE user_id=? AND status='open'", u.id)) {
+      run('INSERT INTO reset_requests(user_id) VALUES(?)', u.id); audit(req, 'password_reset_requested', u.username, u.company_id);
+    }
+    done();
+  });
+  const issueLink = (req, u, by) => { const token = crypto.randomBytes(24).toString('hex'); run('INSERT INTO reset_tokens(token_hash,user_id,expires_at,created_by) VALUES(?,?,?,?)', sha(token), u.id, Date.now() + 24 * 3600e3, by); run("UPDATE reset_requests SET status='done' WHERE user_id=?", u.id); return `${opts.baseUrl || `${req.protocol}://${req.get('host')}`}/reset/${token}`; };
+  app.post('/app/employees/:id/reset-link', needAdmin, (req, res) => {
+    const u = q1("SELECT * FROM users WHERE id=? AND company_id=? AND role='employee'", Number(req.params.id), req.user.company_id);
+    if (!u) return deny(req, res, 404);
+    const url = issueLink(req, u, req.user.id); audit(req, 'password_reset_link_issued', u.username);
+    const c = ctx(req), t = req.i.t;
+    res.send(page(c, 'Reset', `<div class="card"><h3>${t('Reset password link')}</h3><p>${t('Link valid for 24 hours. Give it to the employee. It can be used once.')}</p><p><input readonly value="${esc(url)}" onfocus="this.select()"></p><p><a class="btn" href="/app/employees">${t('Back')}</a></p></div>`, nav(req)));
+  });
   app.get('/reset/:token', (req, res) => {
     const r = q1('SELECT * FROM reset_tokens WHERE token_hash=? AND used=0 AND expires_at>?', sha(req.params.token), Date.now());
     const c = ctx(req), t = req.i.t;
@@ -244,6 +275,8 @@ ${field(t('Current password'), 'current', '', { type: 'password', req: true })}$
     go(res, '/account', 'ok', req.i.t('Saved'));
   });
 
+  const NOMAIL = '@noemail.invalid';
+  const userMail = (email, username) => email || `${username}${NOMAIL}`;
   function nav(req) {
     const t = req.i.t, u = req.user;
     if (!u) return '';
@@ -271,7 +304,9 @@ ${field(t('Current password'), 'current', '', { type: 'password', req: true })}$
     const customers = q1('SELECT count(*) n FROM customers').n;
     const recent = q('SELECT a.*, c.name cname FROM audit_log a LEFT JOIN companies c ON c.id=a.company_id ORDER BY a.id DESC LIMIT 10');
     const stat = (n, l) => `<div class="stat"><b>${n}</b><span>${t(l)}</span></div>`;
-    res.send(page(c, 'Dashboard', `<div class="grid">${stat(comps.length, 'Total companies')}${stat(cnt('active'), 'Active companies')}${stat(cnt('trial'), 'Trial companies')}${stat(cnt('suspended'), 'Suspended companies')}${stat(cnt('expired'), 'Expired subscriptions')}${stat(customers, 'Total customers')}</div>
+    const rr = q("SELECT r.id, u.id uid, u.username, c.id cid, c.name cname FROM reset_requests r JOIN users u ON u.id=r.user_id JOIN companies c ON c.id=u.company_id WHERE r.status='open' AND u.role='company_admin' ORDER BY r.id");
+    const rrCard = rr.length ? `<div class="card tbl"><h3>${t('Password reset requests')}</h3><table>${rr.map((r) => `<tr><td>${esc(r.cname)}</td><td>${esc(r.username)}</td><td><form class="inline" method="post" action="/admin/companies/${r.cid}/reset/${r.uid}">${csrfField(c)}<button>${t('Issue reset link')}</button></form></td></tr>`).join('')}</table></div>` : '';
+    res.send(page(c, 'Dashboard', `${rrCard}<div class="grid">${stat(comps.length, 'Total companies')}${stat(cnt('active'), 'Active companies')}${stat(cnt('trial'), 'Trial companies')}${stat(cnt('suspended'), 'Suspended companies')}${stat(cnt('expired'), 'Expired subscriptions')}${stat(customers, 'Total customers')}</div>
 <div class="card" style="margin-top:16px"><h3>${t('Recent activity')}</h3><div class="tbl"><table>${recent.map((a) => `<tr><td>${esc(a.ts)}</td><td>${esc(a.cname || '-')}</td><td>${esc(a.action)}</td><td>${esc(a.detail)}</td></tr>`).join('') || `<tr><td>${t('No results')}</td></tr>`}</table></div></div>`, nav(req)));
   });
   app.get('/admin/audit', needSuper, (req, res) => {
@@ -289,14 +324,14 @@ ${select(t('Status'), 'status', st, [['', t('All')], ['active', t('Active')], ['
 ${rows.map((r) => `<tr><td>${r.id}</td><td>${esc(r.name)}</td><td>${esc(r.owner_name)}</td><td>${esc(P.planName(P.getPlan(r.plan), req.i))}</td><td>${badge(statusOf(r), t)}</td><td>${r.cust}</td><td><a href="/admin/companies/${r.id}">${t('View')}</a></td></tr>`).join('') || `<tr><td colspan="7">${t('No results')}</td></tr>`}</table></div>`, nav(req)));
   });
   const companyForm = (c, t, co = {}) => `<div class="row">${field(t('Company name'), 'name', co.name, { req: true })}${field(t('Network name'), 'network_name', co.network_name)}${field(t('Owner name'), 'owner_name', co.owner_name)}
-${field(t('Email'), 'email', co.email, { req: true, type: 'email' })}${field(t('Phone'), 'phone', co.phone)}${field(t('WhatsApp'), 'whatsapp', co.whatsapp)}${field(t('Country'), 'country', co.country || 'EG')}${field(t('City'), 'city', co.city)}${field(t('Address'), 'address', co.address)}</div>${field(t('Notes'), 'notes', co.notes, { ta: true })}`;
+${field(t('Email'), 'email', co.email, { type: 'email' })}${field(t('Phone'), 'phone', co.phone)}${field(t('WhatsApp'), 'whatsapp', co.whatsapp)}${field(t('Country'), 'country', co.country || 'EG')}${field(t('City'), 'city', co.city)}${field(t('Address'), 'address', co.address)}</div>${field(t('Notes'), 'notes', co.notes, { ta: true })}`;
   const createForm = (req, c, v = {}) => {
     const t = req.i.t, opts = P.planOptions(req.i);
     const data = JSON.stringify({ plans: opts, lbl: { trial: t('Trial'), monthly: t('Monthly'), quarterly: t('Quarterly'), semiannual: t('Semi-annual'), annual: t('Annual'), custom: t('Custom duration'), days: t('days'), unl: t('Unlimited'), setup: t('Setup fee'), price: t('Plan Price'), admins: t('Maximum Dashboard Users'), subs: t('Maximum Managed Subscribers'), routers: t('Maximum Routers'), aps: t('Maximum Access Points'), trialdur: t('Trial Duration') } }).replace(/</g, '\\u003c');
     const sec = (title, body) => `<div class="card"><h3>${t(title)}</h3><div class="row2">${body}</div></div>`;
     const limInput = (k, label) => `<div><label>${t(label)}</label><input type="number" min="0" name="lim_${k}" id="lim_${k}"><label style="display:flex;gap:6px;align-items:center;color:var(--tx);margin:2px 0"><input type="checkbox" style="width:auto" name="unl_${k}" id="unl_${k}" value="1"> ${t('Unlimited')}</label></div>`;
     return `<div class="card"><h3>${t('New company')}</h3></div><form method="post" action="/admin/companies">${csrfField(c)}
-${sec('Company Information', `${field(t('Company name'), 'name', v.name, { req: true })}${field(t('Network name'), 'network_name', v.network_name)}${field(t('Owner name'), 'owner_name', v.owner_name)}${field(t('Email'), 'email', v.email, { req: true, type: 'email' })}${field(t('Phone'), 'phone', v.phone)}${field(t('WhatsApp'), 'whatsapp', v.whatsapp)}${field(t('Country'), 'country', v.country || 'EG')}${field(t('City'), 'city', v.city)}${field(t('Address'), 'address', v.address)}`)}
+${sec('Company Information', `${field(t('Company name'), 'name', v.name, { req: true })}${field(t('Network name'), 'network_name', v.network_name)}${field(t('Owner name'), 'owner_name', v.owner_name)}${field(t('Email'), 'email', v.email, { type: 'email' })}${field(t('Phone'), 'phone', v.phone)}${field(t('WhatsApp'), 'whatsapp', v.whatsapp)}${field(t('Country'), 'country', v.country || 'EG')}${field(t('City'), 'city', v.city)}${field(t('Address'), 'address', v.address)}`)}
 ${sec('Account Information', `${field(t('Admin username'), 'admin_username', v.admin_username, { req: true })}${field(t('Admin password'), 'admin_password', '', { type: 'password', req: true })}${field(t('Confirm Password'), 'admin_confirm', '', { type: 'password', req: true })}`)}
 ${sec('Subscription Configuration', `${select(t('Select Plan'), 'plan_id', '', opts.map((o) => [o.id, o.name]))}${select(t('Billing Period'), 'period', '', [['monthly', t('Monthly')]])}
 <div><label>${t('Plan Price')}</label><input id="priceShow" readonly></div><div><label>${t('Trial Duration')}</label><input id="trialShow" readonly></div>
@@ -326,16 +361,17 @@ $('plan_id').onchange=fill;$('period').onchange=upd;$('sub_start').onchange=upd;
     const t = req.i.t, b = req.body;
     const name = clean(b.name), email = clean(b.email, 200).toLowerCase(), au = clean(b.admin_username, 60).toLowerCase(), ap = String(b.admin_password || '');
     const bad = (m) => go(res, '/admin/companies/new', 'err', t(m));
-    if (!name || !email || !au) return bad('required');
+    if (!name || !au) return bad('required');
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return bad('required');
     const prob = passwordProblem(ap);
     if (prob) return bad(prob);
     if (b.admin_confirm !== undefined && b.admin_confirm !== ap) return bad('pw_mismatch');
-    if (q1('SELECT 1 x FROM users WHERE lower(username)=? OR lower(email)=?', au, email)) return bad('duplicate');
+    if (q1('SELECT 1 x FROM users WHERE lower(username)=? OR lower(email)=?', au, userMail(email, au))) return bad('duplicate');
     const plan = b.plan_id !== undefined ? P.getPlan(Number(b.plan_id)) : P.getPlan(String(b.plan || 'trial'));
     if (!plan || !plan.active || plan.archived) return bad('Plan is not available');
     const periods = P.availablePeriods(plan);
     const period = b.period && periods.includes(b.period) ? b.period : periods[0];
-    if (b.period && !periods.includes(b.period)) return bad('Plan is not available');
+    if (b.period && !periods.includes(b.period) && periods.length > 1) return bad('Plan is not available');
     const logo = clean(b.logo, 100000);
     if (!P.validIcon(logo)) return bad('required');
     const start = b.sub_start ? clean(b.sub_start, 10) : P.today();
@@ -352,7 +388,7 @@ $('plan_id').onchange=fill;$('period').onchange=upd;$('sub_start').onchange=upd;
       cid = run(`INSERT INTO companies(name,network_name,owner_name,email,phone,whatsapp,country,city,address,plan,status,trial_ends,subscription_ends,notes,billing_period,price_paid,currency,sub_start,limit_overrides,logo) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         name, clean(b.network_name), clean(b.owner_name), email, clean(b.phone, 40), clean(b.whatsapp, 40), clean(b.country, 40), clean(b.city, 80), clean(b.address, 300), plan.code,
         status, isTrial ? end : null, isTrial ? null : end, clean(b.notes, 1000), period, price, plan.currency, start, JSON.stringify(over), logo).lastInsertRowid;
-      run(`INSERT INTO users(company_id,name,username,email,phone,password_hash,role) VALUES(?,?,?,?,?,?, 'company_admin')`, cid, clean(b.owner_name) || name, au, email, clean(b.phone, 40), hashPassword(ap));
+      run(`INSERT INTO users(company_id,name,username,email,phone,password_hash,role) VALUES(?,?,?,?,?,?, 'company_admin')`, cid, clean(b.owner_name) || name, au, userMail(email, au), clean(b.phone, 40), hashPassword(ap));
       const amount = price + (plan.setup_fee || 0);
       P.addInvoice({ id: cid }, plan, 'subscription', period, amount, 0, plan.setup_fee > 0 ? `setup fee ${plan.setup_fee}` : '', amount === 0 ? 'paid' : 'unpaid');
       db.exec('COMMIT');
@@ -382,7 +418,8 @@ ${P.adminSubscriptionCard(req, c, co)}
   app.post('/admin/companies/:id/edit', needSuper, (req, res) => {
     const co = getCompany(req, res); if (!co) return;
     const t = req.i.t, b = req.body, name = clean(b.name), email = clean(b.email, 200).toLowerCase();
-    if (!name || !email) return go(res, `/admin/companies/${co.id}`, 'err', t('required'));
+    if (!name) return go(res, `/admin/companies/${co.id}`, 'err', t('required'));
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return go(res, `/admin/companies/${co.id}`, 'err', t('required'));
     run(`UPDATE companies SET name=?,network_name=?,owner_name=?,email=?,phone=?,whatsapp=?,country=?,city=?,address=?,notes=?,logo=? WHERE id=?`,
       name, clean(b.network_name), clean(b.owner_name), email, clean(b.phone, 40), clean(b.whatsapp, 40), clean(b.country, 40), clean(b.city, 80), clean(b.address, 300), clean(b.notes, 1000), P.validIcon(clean(b.logo, 100000)) ? (b.logo === undefined ? co.logo : clean(b.logo, 100000)) : co.logo, co.id);
     audit(req, 'company_updated', name, co.id);
@@ -421,6 +458,7 @@ ${P.adminSubscriptionCard(req, c, co)}
       run('INSERT INTO deleted_companies(company_id,name,deleted_by,snapshot) VALUES(?,?,?,?)', co.id, co.name, req.user.username, JSON.stringify(snap));
       for (const tb of ['vouchers', 'voucher_batches', 'voucher_templates', 'cust_payments', 'cust_invoices', 'expenses', 'packages', 'payments', 'device_alerts', 'device_groups', 'devices', 'plan_requests', 'invoices', 'customers']) run(`DELETE FROM ${tb} WHERE company_id=?`, co.id);
       run('DELETE FROM sessions WHERE user_id IN (SELECT id FROM users WHERE company_id=?)', co.id);
+      run('DELETE FROM reset_requests WHERE user_id IN (SELECT id FROM users WHERE company_id=?)', co.id);
       run('DELETE FROM reset_tokens WHERE user_id IN (SELECT id FROM users WHERE company_id=?)', co.id);
       run('DELETE FROM users WHERE company_id=?', co.id);
       run('DELETE FROM companies WHERE id=?', co.id);
@@ -442,11 +480,9 @@ ${P.adminSubscriptionCard(req, c, co)}
     const co = getCompany(req, res); if (!co) return;
     const u = q1("SELECT * FROM users WHERE id=? AND company_id=? AND role='company_admin'", Number(req.params.uid), co.id);
     if (!u) return deny(req, res, 404);
-    const token = crypto.randomBytes(24).toString('hex');
-    run('INSERT INTO reset_tokens(token_hash,user_id,expires_at,created_by) VALUES(?,?,?,?)', sha(token), u.id, Date.now() + 24 * 3600e3, req.user.id);
+    const url = issueLink(req, u, req.user.id);
     audit(req, 'password_reset_link_issued', u.username, co.id);
     const c = ctx(req), t = req.i.t;
-    const url = `${opts.baseUrl || `${req.protocol}://${req.get('host')}`}/reset/${token}`;
     res.send(page(c, 'Reset', `<div class="card"><h3>${t('Reset password link')}</h3><p>${t('Link valid for 24 hours. Give it to the client admin. It can be used once.')}</p><p><input readonly value="${esc(url)}" onfocus="this.select()"></p><p><a class="btn" href="/admin/companies/${co.id}">${t('Company profile')}</a></p></div>`, nav(req)));
   });
   app.get('/admin/companies/:id/export', needSuper, (req, res) => {
@@ -556,25 +592,27 @@ ${can(req.user, 'customers.edit') && req.user.role === 'company_admin' ? FIN.cus
   app.get('/app/employees', needAdmin, (req, res) => {
     const t = req.i.t, c = ctx(req);
     const rows = q("SELECT * FROM users WHERE company_id=? AND role='employee' ORDER BY id", req.user.company_id);
-    res.send(page(c, 'Employees', `<div class="card"><a class="btn" href="/app/employees/new">${t('Add')}</a></div><div class="card tbl"><table><tr><th>${t('Name')}</th><th>${t('Username')}</th><th>${t('Role')}</th><th>${t('Status')}</th><th></th></tr>
+    const rq = q("SELECT u.id, u.name, u.username FROM reset_requests r JOIN users u ON u.id=r.user_id WHERE r.status='open' AND u.company_id=? AND u.role='employee'", req.user.company_id);
+    const rqCard = rq.length ? `<div class="card tbl"><h3>${t('Password reset requests')}</h3><table>${rq.map((r) => `<tr><td>${esc(r.name)}</td><td>${esc(r.username)}</td><td><form class="inline" method="post" action="/app/employees/${r.id}/reset-link">${csrfField(c)}<button>${t('Issue reset link')}</button></form></td></tr>`).join('')}</table></div>` : '';
+    res.send(page(c, 'Employees', `${rqCard}<div class="card"><a class="btn" href="/app/employees/new">${t('Add')}</a></div><div class="card tbl"><table><tr><th>${t('Name')}</th><th>${t('Username')}</th><th>${t('Role')}</th><th>${t('Status')}</th><th></th></tr>
 ${rows.map((u) => `<tr><td>${esc(u.name)}</td><td>${esc(u.username)}</td><td>${esc(t(u.emp_role))}</td><td>${badge(u.status, t)}</td><td><a href="/app/employees/${u.id}">${t('Edit')}</a></td></tr>`).join('') || `<tr><td colspan="5">${t('No results')}</td></tr>`}</table></div>`, nav(req)));
   });
   app.get('/app/employees/new', needAdmin, (req, res) => {
     const t = req.i.t, c = ctx(req);
-    res.send(page(c, 'New employee', `<div class="card"><form method="post" action="/app/employees">${csrfField(c)}<div class="row">${field(t('Name'), 'name', '', { req: true })}${field(t('Username'), 'username', '', { req: true })}${field(t('Email'), 'email', '', { type: 'email', req: true })}${field(t('Password'), 'password', '', { type: 'password', req: true })}
+    res.send(page(c, 'New employee', `<div class="card"><form method="post" action="/app/employees">${csrfField(c)}<div class="row">${field(t('Name'), 'name', '', { req: true })}${field(t('Username'), 'username', '', { req: true })}${field(t('Email'), 'email', '', { type: 'email' })}${field(t('Password'), 'password', '', { type: 'password', req: true })}
 ${select(t('Role'), 'emp_role', 'Cashier', Object.keys(ROLE_PRESETS).map((r) => [r, t(r)]))}</div><label>${t('Permissions')} (${t('Role')} preset applies if none ticked)</label>${permChecks(t)}<p><button>${t('Save')}</button></p></form></div>`, nav(req)));
   });
   app.post('/app/employees', needAdmin, (req, res) => {
     const t = req.i.t, b = req.body, cid = req.user.company_id;
     const un = clean(b.username, 60).toLowerCase(), em = clean(b.email, 200).toLowerCase(), name = clean(b.name);
     const role = ROLE_PRESETS[b.emp_role] ? b.emp_role : 'Read-only Employee';
-    if (!un || !em || !name) return go(res, '/app/employees/new', 'err', t('required'));
+    if (!un || !name) return go(res, '/app/employees/new', 'err', t('required'));
     { const r = P.checkLimit(cid, 'max_employees'); if (r) { audit(req, 'limit_blocked', 'max_employees'); return go(res, '/app/employees/new', 'err', P.limitMsg(t, r)); } }
     const prob = passwordProblem(String(b.password || ''));
     if (prob) return go(res, '/app/employees/new', 'err', t(prob));
-    if (q1('SELECT 1 x FROM users WHERE lower(username)=? OR lower(email)=?', un, em)) return go(res, '/app/employees/new', 'err', t('duplicate'));
+    if (q1('SELECT 1 x FROM users WHERE lower(username)=? OR lower(email)=?', un, userMail(em, un))) return go(res, '/app/employees/new', 'err', t('duplicate'));
     const perms = parsePerms(b), final = perms.length ? perms : ROLE_PRESETS[role];
-    const id = run(`INSERT INTO users(company_id,name,username,email,password_hash,role,emp_role,permissions) VALUES(?,?,?,?,?, 'employee',?,?)`, cid, name, un, em, hashPassword(b.password), role, JSON.stringify(final)).lastInsertRowid;
+    const id = run(`INSERT INTO users(company_id,name,username,email,password_hash,role,emp_role,permissions) VALUES(?,?,?,?,?, 'employee',?,?)`, cid, name, un, userMail(em, un), hashPassword(b.password), role, JSON.stringify(final)).lastInsertRowid;
     audit(req, 'employee_created', un);
     go(res, `/app/employees/${id}`, 'ok', t('Created'));
   });
@@ -606,7 +644,12 @@ ${field(t('New password'), 'password', '', { type: 'password' })}${select(t('Rol
   });
 
   // ---- company settings & audit
-  const okImg = (s) => s === '' || (/^data:image\/(png|jpeg|gif|webp);base64,[A-Za-z0-9+/=]+$/.test(s) && s.length <= 300000);
+  const okImg = (s) => {
+    if (s === '') return true;
+    const m = /^data:image\/(png|jpeg|gif|webp);base64,([A-Za-z0-9+/=]+)$/.exec(s); if (!m || s.length > 300000) return false;
+    const h = Buffer.from(m[2].slice(0, 40), 'base64'), type = m[1];
+    return (type === 'png' && h.slice(0, 4).toString('hex') === '89504e47') || (type === 'jpeg' && h.slice(0, 3).toString('hex') === 'ffd8ff') || (type === 'gif' && /^GIF8/.test(h.slice(0, 4).toString('latin1'))) || (type === 'webp' && h.slice(0, 4).toString('latin1') === 'RIFF' && h.slice(8, 12).toString('latin1') === 'WEBP');
+  };
   const okColor = (s) => /^#[0-9a-fA-F]{6}$/.test(s);
   app.get('/app/settings', needAdmin, (req, res) => {
     const t = req.i.t, c = ctx(req), co = q1('SELECT * FROM companies WHERE id=?', req.user.company_id);
