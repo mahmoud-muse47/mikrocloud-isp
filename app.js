@@ -433,7 +433,7 @@ ${co.status === 'suspended' ? `<p class="flash err">${t('Suspended')}${co.suspen
 <form method="post" action="/admin/companies/${co.id}/extend" class="row">${csrfField(c)}${field(t('Days'), 'days', '30', { type: 'number' })}<div style="padding-top:22px"><button>${t('Extend')}</button></div></form></div>
 <div class="card"><h3>${t('Company profile')}</h3><form method="post" action="/admin/companies/${co.id}/edit">${csrfField(c)}${companyForm(c, t, co)}<p><button>${t('Save')}</button></p></form></div>
 ${P.adminSubscriptionCard(req, c, co)}
-<div class="card"><h3>${t('Employees')}</h3><div class="tbl"><table><tr><th>${t('Name')}</th><th>${t('Username')}</th><th>${t('Role')}</th><th>${t('Status')}</th><th></th></tr>${emps.map((u) => `<tr><td>${esc(u.name)}</td><td>${esc(u.username)}</td><td>${esc(u.role === 'company_admin' ? t('Company admin') : u.emp_role)}</td><td>${badge(u.status, t)}</td><td>${u.role === 'company_admin' ? act(`reset/${u.id}`, t('Reset password link'), 'sec') : ''}</td></tr>`).join('')}</table></div></div>
+<div class="card"><h3>${t('Employees')}</h3><div class="tbl"><table><tr><th>${t('Name')}</th><th>${t('Username')}</th><th>${t('Role')}</th><th>${t('Status')}</th><th></th></tr>${emps.map((u) => `<tr><td>${esc(u.name)}</td><td>${esc(u.username)}</td><td>${esc(u.role === 'company_admin' ? t('Company admin') : u.emp_role)}</td><td>${badge(u.status, t)}</td><td>${u.role === 'company_admin' ? act(`reset/${u.id}`, t('Reset password link'), 'sec') + ' ' : ''}<form class="inline" method="post" action="/admin/companies/${co.id}/newpass/${u.id}" onsubmit="return confirm('${t('Create a new password for this user? The old one stops working.')}')">${csrfField(c)}<button class="sec">${t('New password')}</button></form></td></tr>`).join('')}</table></div></div>
 <div class="card"><h3>${t('Recent activity')}</h3><div class="tbl"><table>${acts.map((a) => `<tr><td>${esc(a.ts)}</td><td>${esc(a.action)}</td><td>${esc(a.detail)}</td></tr>`).join('')}</table></div></div>`, nav(req)));
   });
   app.post('/admin/companies/:id/edit', needSuper, (req, res) => {
@@ -497,6 +497,21 @@ ${P.adminSubscriptionCard(req, c, co)}
     run(`UPDATE companies SET ${col}=? WHERE id=?`, addDays(base, days), co.id);
     audit(req, 'subscription_extended', `${days} days`, co.id);
     go(res, `/admin/companies/${co.id}`, 'ok', req.i.t('Updated'));
+  });
+  // Super admin sets a new random password for a client user. It is shown once; only the hash is stored, so nobody can read it later.
+  const genPassword = () => { const A = 'ABCDEFGHJKLMNPQRSTUVWXYZ', a = 'abcdefghijkmnpqrstuvwxyz', D = '23456789', all = A + a + D; const pick = (s) => s[crypto.randomInt(s.length)]; const ch = [pick(A), pick(a), pick(D)]; while (ch.length < 14) ch.push(pick(all)); for (let i = ch.length - 1; i > 0; i--) { const j = crypto.randomInt(i + 1); [ch[i], ch[j]] = [ch[j], ch[i]]; } return ch.join(''); };
+  app.post('/admin/companies/:id/newpass/:uid', needSuper, (req, res) => {
+    const co = getCompany(req, res); if (!co) return;
+    const u = q1("SELECT * FROM users WHERE id=? AND company_id=? AND role IN ('company_admin','employee')", Number(req.params.uid), co.id);
+    if (!u) return deny(req, res, 404);
+    const pw = genPassword();
+    run('UPDATE users SET password_hash=?, failed_attempts=0, locked_until=0 WHERE id=?', hashPassword(pw), u.id);
+    run('DELETE FROM sessions WHERE user_id=?', u.id);
+    run("UPDATE reset_requests SET status='done' WHERE user_id=? AND status='open'", u.id);
+    audit(req, 'password_set_by_admin', u.username, co.id);
+    const c = ctx(req), t = req.i.t;
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(page(c, 'Password', `<div class="card"><h3>${t('New password')}: ${esc(u.username)}</h3><p>${t('Shown once. Copy it now and give it to the user. It cannot be shown again, only replaced with another new one. All sessions of this user were signed out.')}</p><p><input readonly dir="ltr" style="font-size:20px;letter-spacing:1px" value="${esc(pw)}" onfocus="this.select()"></p><p><a class="btn" href="/admin/companies/${co.id}">${t('Company profile')}</a></p></div>`, nav(req)));
   });
   app.post('/admin/companies/:id/reset/:uid', needSuper, (req, res) => {
     const co = getCompany(req, res); if (!co) return;

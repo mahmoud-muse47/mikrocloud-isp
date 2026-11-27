@@ -12,3 +12,7 @@ Object.assign(module.exports, {
   'Off-site copy': 'نسخة خارجية', 'on': 'مفعلة', 'off (not configured)': 'غير مفعلة', 'How to restore': 'طريقة الاستعادة', 'Backup created and checked': 'تم إنشاء النسخة وفحصها', 'Backup created but the check failed': 'تم إنشاء النسخة لكن الفحص فشل',
   'Two-factor authentication is required for the super admin. Set it up below to continue.': 'المصادقة الثنائية مطلوبة لمدير المنصة. فعّلها بالأسفل للمتابعة.', 'Two-factor cannot be turned off for the super admin': 'لا يمكن إيقاف المصادقة الثنائية لمدير المنصة',
 });
+Object.assign(module.exports, {
+  'New password': 'كلمة مرور جديدة', 'Create a new password for this user? The old one stops working.': 'إنشاء كلمة مرور جديدة لهذا المستخدم؟ ستتوقف القديمة عن العمل.',
+  'Shown once. Copy it now and give it to the user. It cannot be shown again, only replaced with another new one. All sessions of this user were signed out.': 'تظهر مرة واحدة. انسخها الآن وسلّمها للمستخدم. لا يمكن عرضها مرة أخرى، فقط استبدالها بجديدة. تم تسجيل خروج كل جلسات هذا المستخدم.',
+});
