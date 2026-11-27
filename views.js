@@ -44,7 +44,7 @@ function tp(id,b){var i=document.getElementById(id);i.type=i.type==='password'?'
 function page(ctx, title, body, nav = '') {
   const { i, user, csrf, flash, path } = ctx;
   const t = i.t;
-  const side = !!(user && nav && user.role !== 'super_admin');
+  const side = !!(user && nav);
   const other = i.lang === 'ar' ? 'en' : 'ar';
   return `<!doctype html><html lang="${i.lang}" dir="${i.rtl ? 'rtl' : 'ltr'}"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)} - ${esc(BRAND)}</title><style>${css}</style></head><body class="${user && user.role !== 'super_admin' ? 'cl' : ''}">
