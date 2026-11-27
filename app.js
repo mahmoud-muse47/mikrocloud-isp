@@ -78,6 +78,10 @@ function createApp(db, opts = {}) {
     const f = cookies.flash;
     if (f) { try { req.flash = JSON.parse(f); } catch { } res.append('Set-Cookie', 'flash=; Max-Age=0; Path=/'); }
     res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Content-Security-Policy', "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'");
+    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=()');
+    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+    if (opts.secureCookies) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'same-origin');
     res.setHeader('Cache-Control', 'no-store');
@@ -116,7 +120,7 @@ function createApp(db, opts = {}) {
   app.get('/lang/:l', (req, res) => {
     res.append('Set-Cookie', `lang=${req.params.l === 'en' ? 'en' : 'ar'}; Path=/; Max-Age=31536000; SameSite=Lax`);
     const back = String(req.query.back || '/');
-    res.redirect(303, back.startsWith('/') && !back.startsWith('//') ? back : '/');
+    res.redirect(303, /^\/(?![\/\\])[^\r\n\\]*$/.test(back) ? back : '/');
   });
   app.get('/', (req, res) => res.redirect(303, req.user ? home(req.user) : '/login'));
   app.get('/health', (req, res) => res.json({ ok: true }));
@@ -129,7 +133,7 @@ function createApp(db, opts = {}) {
     const ident = clean(req.body.identifier, 200).toLowerCase(), pw = String(req.body.password || '');
     const hits = (ipHits.get(req.ip) || []).filter((x) => x > Date.now() - 10 * 60e3);
     if (hits.length >= 30) return fail('Too many attempts', 429);
-    hits.push(Date.now()); ipHits.set(req.ip, hits);
+    hits.push(Date.now()); ipHits.set(req.ip, hits); if (ipHits.size > 5000) for (const [k, v] of ipHits) if (!v.some((x) => x > Date.now() - 10 * 60e3)) ipHits.delete(k);
     const u = q1('SELECT * FROM users WHERE lower(username)=? OR lower(email)=?', ident, ident);
     const log = (ok, reason) => run('INSERT INTO login_history(user_id,identifier,success,reason,ip) VALUES(?,?,?,?,?)', u ? u.id : null, ident, ok ? 1 : 0, reason, req.ip);
     if (!u) { verifyPassword(pw, 'scrypt$00$00'); log(0, 'unknown'); return fail('Invalid credentials'); }
@@ -636,7 +640,7 @@ ${field(t('New password'), 'password', '', { type: 'password' })}${select(t('Rol
   });
 
   app.use((req, res) => (req.user ? deny(req, res, 404) : res.status(404).send('Not found')));
-  app.use((err, req, res, next) => { console.error(err); res.status(500).send('Server error'); });
+  app.use((err, req, res, next) => { const code = err && err.status >= 400 && err.status < 500 ? err.status : 500; if (code === 500) console.error(err); res.status(code).send(code === 413 ? 'Request too large' : code === 500 ? 'Server error' : 'Bad request'); });
   return app;
 }
 module.exports = { createApp, ROLE_PRESETS };
