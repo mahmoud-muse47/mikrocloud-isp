@@ -33,7 +33,7 @@ function hBars(rows, color = '#2563eb') {
 function init(h) {
   const { app, q, q1, ctx, needAdmin, deny, nav, P } = h;
   const cur = (cid) => (q1('SELECT currency FROM companies WHERE id=?', cid) || {}).currency || 'EGP';
-  const needR = [needAdmin, (req, res, next) => (P.hasModule(q1('SELECT * FROM companies WHERE id=?', req.user.company_id), 'reports') ? next() : deny(req, res))];
+  const needR = [needAdmin, (req, res, next) => (P.hasModule(q1('SELECT * FROM companies WHERE id=?', req.user.company_id), 'reports') ? next() : deny(req, res, 'module'))];
 
   function monthly(cid, n) {
     const ms = monthsBack(n), from = ms[0] + '-01';

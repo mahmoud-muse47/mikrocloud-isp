@@ -72,7 +72,7 @@ const sample = (t) => ({ username: 'NET-A7K92M', password: '48271', package: 'Go
 
 function init(h) {
   const { app, q, q1, run, audit, ctx, go, deny, needAdmin, nav, P } = h;
-  const needV = [needAdmin, (req, res, next) => (P.hasModule(q1('SELECT * FROM companies WHERE id=?', req.user.company_id), 'vouchers') ? next() : deny(req, res))];
+  const needV = [needAdmin, (req, res, next) => (P.hasModule(q1('SELECT * FROM companies WHERE id=?', req.user.company_id), 'vouchers') ? next() : deny(req, res, 'module'))];
   const getCo = (cid) => q1('SELECT * FROM companies WHERE id=?', cid);
   const ctxd = (co) => ({ net: co.network_name || co.name, phone: co.phone || co.whatsapp || '' });
 

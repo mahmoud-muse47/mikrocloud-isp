@@ -92,7 +92,7 @@ CREATE TABLE IF NOT EXISTS devices(
 CREATE INDEX IF NOT EXISTS idx_devices_company ON devices(company_id);
 `);
 
-  for (const [col, def] of [['billing_period', "TEXT DEFAULT 'monthly'"], ['price_paid', 'REAL DEFAULT 0'], ['currency', "TEXT DEFAULT 'EGP'"], ['sub_start', 'TEXT'], ['limit_overrides', "TEXT DEFAULT '{}'"], ['logo', "TEXT DEFAULT ''"], ['legal_name', "TEXT DEFAULT ''"], ['phone2', "TEXT DEFAULT ''"], ['website', "TEXT DEFAULT ''"], ['tax_no', "TEXT DEFAULT ''"], ['description', "TEXT DEFAULT ''"], ['stamp', "TEXT DEFAULT ''"], ['brand_color', "TEXT DEFAULT '#2563eb'"], ['brand_color2', "TEXT DEFAULT '#0f172a'"], ['invoice_footer', "TEXT DEFAULT ''"], ['support_info', "TEXT DEFAULT ''"], ['logo_h', 'INTEGER DEFAULT 48'], ['suspended_until', 'TEXT']]) {
+  for (const [col, def] of [['billing_period', "TEXT DEFAULT 'monthly'"], ['enroll_hash', "TEXT DEFAULT ''"], ['enroll_enc', "TEXT DEFAULT ''"], ['enroll_at', 'TEXT'], ['price_paid', 'REAL DEFAULT 0'], ['currency', "TEXT DEFAULT 'EGP'"], ['sub_start', 'TEXT'], ['limit_overrides', "TEXT DEFAULT '{}'"], ['logo', "TEXT DEFAULT ''"], ['legal_name', "TEXT DEFAULT ''"], ['phone2', "TEXT DEFAULT ''"], ['website', "TEXT DEFAULT ''"], ['tax_no', "TEXT DEFAULT ''"], ['description', "TEXT DEFAULT ''"], ['stamp', "TEXT DEFAULT ''"], ['brand_color', "TEXT DEFAULT '#2563eb'"], ['brand_color2', "TEXT DEFAULT '#0f172a'"], ['invoice_footer', "TEXT DEFAULT ''"], ['support_info', "TEXT DEFAULT ''"], ['logo_h', 'INTEGER DEFAULT 48'], ['suspended_until', 'TEXT']]) {
     if (!db.hasCol('companies', col)) db.exec(`ALTER TABLE companies ADD COLUMN ${col} ${def}`);
   }
   if (!db.hasCol('users', 'totp_on')) { db.exec('ALTER TABLE users ADD COLUMN totp_on INTEGER NOT NULL DEFAULT 0'); db.exec("ALTER TABLE users ADD COLUMN totp_secret TEXT NOT NULL DEFAULT ''"); db.exec("ALTER TABLE users ADD COLUMN totp_recovery TEXT NOT NULL DEFAULT ''"); }
@@ -122,6 +122,8 @@ CREATE INDEX IF NOT EXISTS idx_devices_company ON devices(company_id);
     ins.run('pro', 'Professional', 'احترافي', 'For growing ISPs', 'لشركات الإنترنت المتنامية', 3, 1, 0, 0, 700, 2000, 3800, 7000, 3, 10, 2500, 10, 30, 60, 'customers,network,vouchers,reports');
     ins.run('enterprise', 'Enterprise', 'مؤسسات', 'Custom limits for large operators', 'حدود مخصصة للمشغلين الكبار', 4, 0, 0, 0, 2000, 5700, 10800, 20000, 10, 50, -1, -1, -1, -1, 'customers,network,vouchers,reports,api');
   }
+  // trial must show the whole product: one-time upgrade of the untouched seed value
+  try { db.prepare("UPDATE plans SET modules='customers,network,vouchers,reports' WHERE code='trial' AND modules='customers,network'").run(); } catch { }
   return db;
 }
 

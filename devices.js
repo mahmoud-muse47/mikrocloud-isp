@@ -49,7 +49,7 @@ function init(h, P) {
 
   const gate = (req, res, next) => {
     const co = q1('SELECT * FROM companies WHERE id=?', req.user.company_id);
-    if (!P.hasModule(co, 'network')) return deny(req, res);
+    if (!P.hasModule(co, 'network')) return deny(req, res, 'module');
     evaluate(co.id); next();
   };
   const own = (req, res) => { const d = q1('SELECT * FROM devices WHERE id=? AND company_id=?', Number(req.params.id), req.user.company_id); if (!d) { deny(req, res, 404); return null; } return d; };
@@ -69,7 +69,7 @@ ${rows.map((d) => { const st = liveStatus(d); return `<tr><td>${dot(st, t)}</td>
     const all = q('SELECT * FROM devices WHERE company_id=? ORDER BY id DESC', req.user.company_id);
     const rows = cats ? all.filter((d) => cats.includes(d.category)) : all;
     const sm = { online: 0, unknown: 0, offline: 0, unstable: 0 }; rows.forEach((d) => { sm[liveStatus(d)]++; });
-    res.send(page(c, title, sub(req, key, `<div class="card"><a class="btn" href="/app/network/devices/new">${t('Add Network Device')}</a> <span class="mut">${Object.entries(sm).map(([k, v]) => `${dot(k, t)} ${v}`).join(' &nbsp; ')}</span></div>${table(req, rows)}`), nav(req)));
+    res.send(page(c, title, sub(req, key, `<div class="card"><a class="btn" href="/app/network/discovery">${t('Connect MikroTik (automatic)')}</a> <span class="mut">${Object.entries(sm).map(([k, v]) => `${dot(k, t)} ${v}`).join(' &nbsp; ')}</span></div>${table(req, rows)}`), nav(req)));
   };
   app.get('/app/network', needAdmin, gate, listPage('all', 'All Devices'));
   app.get('/app/network/main-routers', needAdmin, gate, listPage('routers_main', 'Main Routers'));
@@ -191,10 +191,108 @@ ${kv('Credentials', d.cred_enc ? `${d.cred_user} / ******** (${t('encrypted')})`
 <div id="topo" style="transform-origin:top left"><ul style="list-style:none;padding-inline-start:20px"><li><b>${t('Internet')}</b><ul style="list-style:none;padding-inline-start:20px">${kids(null).map((d) => node(d, 0)).join('') || `<li>${t('No results')}</li>`}</ul></li></ul></div>
 <p><button class="sec" type="button" onclick="z(0.1)">+</button> <button class="sec" type="button" onclick="z(-0.1)">-</button></p><script>var zz=1;function z(d){zz=Math.max(.4,Math.min(2,zz+d));document.getElementById('topo').style.transform='scale('+zz+')'}</script></div>`), nav(req)));
   });
-  app.get('/app/network/discovery', needAdmin, gate, (req, res) => {
-    const t = req.i.t, c = ctx(req);
-    res.send(page(c, 'Device Discovery', sub(req, 'discovery', `<div class="card"><h3>${t('Device Discovery')}</h3><p>${t('Automatic discovery (RouterOS API, SNMP, LLDP, ARP/DHCP) is not available in this version. The platform runs on the internet and cannot reach private networks, and scanning is limited to what an authorized agent inside the client network reports. Register devices manually and use heartbeat monitoring.')}</p><a class="btn" href="/app/network/devices/new">${t('Add Network Device')}</a></div>`), nav(req)));
+  // ---- automatic link: per-client enrollment token + generated RouterOS script
+  const tokHash = (tk) => crypto.createHash('sha256').update(tk).digest('hex');
+  function companyToken(cid, rotate) {
+    const co = q1('SELECT enroll_hash, enroll_enc FROM companies WHERE id=?', cid);
+    if (!rotate && co && co.enroll_enc) { try { return decrypt(co.enroll_enc); } catch { } }
+    const tk = 'mc_' + crypto.randomBytes(24).toString('hex');
+    run('UPDATE companies SET enroll_hash=?, enroll_enc=?, enroll_at=? WHERE id=?', tokHash(tk), encrypt(tk), nowSql(), cid);
+    return tk;
+  }
+  const routerScript = (base, tk) => `# MikroCloud link - paste the whole block into the MikroTik terminal (RouterOS 7)
+:global mcSend do={
+  :local nb ""
+  :foreach i in=[/ip neighbor find] do={
+    :local m ""; :local n ""; :local p ""; :local a ""
+    :do {:set m [/ip neighbor get $i mac-address]} on-error={}
+    :do {:set n [/ip neighbor get $i identity]} on-error={}
+    :do {:set p [/ip neighbor get $i platform]} on-error={}
+    :do {:set a [/ip neighbor get $i address]} on-error={}
+    :set nb ($nb . $m . "|" . $n . "|" . $p . "|" . $a . ";")
+  }
+  :local bd ""; :local sn ""; :local mac ""
+  :do {:set bd [/system resource get board-name]} on-error={}
+  :do {:set sn [/system routerboard get serial-number]} on-error={}
+  :do {:set mac [/interface ethernet get [find where !slave] mac-address]} on-error={}
+  :local body ("token=${tk}\\nname=" . [/system identity get name] . "\\nboard=" . $bd . "\\nversion=" . [/system resource get version] . "\\nserial=" . $sn . "\\nmac=" . $mac . "\\nnb=" . $nb)
+  :do {/tool fetch url="${base}/api/enroll" http-method=post http-header-field="Content-Type: text/plain" http-data=$body keep-result=no} on-error={:log warning "MikroCloud: send failed"}
+}
+/system script remove [find name=mikrocloud]
+/system script add name=mikrocloud policy=read,test,policy source=":global mcSend; \\$mcSend"
+/system scheduler remove [find name=mikrocloud]
+/system scheduler add name=mikrocloud interval=5m on-event="/system script run mikrocloud" start-time=startup policy=read,test,policy
+/system script run mikrocloud
+`;
+  function connectPage(req, shown) {
+    const t = req.i.t, c = ctx(req), base = `${req.protocol}://${req.get('host')}`;
+    const tk = companyToken(req.user.company_id, false), sc = routerScript(base, tk);
+    const n = q1('SELECT COUNT(*) AS n FROM devices WHERE company_id=?', req.user.company_id).n;
+    return page(c, 'Connect MikroTik', sub(req, 'discovery', `<div class="card"><h3>${t('Connect your MikroTik (automatic)')}</h3>
+<ol><li>${t('Open WinBox or SSH and open New Terminal on your MikroTik.')}</li><li>${t('Copy the script below and paste it into the terminal, then press Enter.')}</li><li>${t('Within a minute the router appears in the list by itself, and devices it sees as neighbors are added as well. Status comes from the heartbeat the router sends every 5 minutes.')}</li></ol>
+<textarea id="mcscript" readonly rows="14" style="width:100%;font-family:monospace;direction:ltr;text-align:left" onfocus="this.select()">${esc(sc)}</textarea>
+<p><button class="btn" type="button" onclick="var e=document.getElementById('mcscript');e.select();navigator.clipboard&&navigator.clipboard.writeText(e.value);this.textContent='${esc(t('Copied'))}'">${t('Copy script')}</button></p>
+<p class="mut">${t('The script contains the private link key of this client. Do not share it. If it leaks, generate a new one: the old script stops working immediately.')}</p>
+<form method="post" action="/app/network/connect/rotate" onsubmit="return confirm('${esc(t('The old script will stop working. Continue?'))}')">${csrfField(c)}<button class="btn">${t('Generate new key')}</button></form>
+<p class="mut">${t('Devices registered so far')}: ${n}. ${t('Requires RouterOS 7 and internet access from the router. The platform cannot reach private networks, so the router calls the platform, never the other way round.')}</p></div>
+<details class="card"><summary>${t('Advanced: add a device manually')}</summary><p class="mut">${t('Only for devices that cannot run the script (for example a switch with no neighbor data).')}</p><a class="btn" href="/app/network/devices/new">${t('Add Network Device')}</a></details>`), nav(req));
+  }
+  app.get('/app/network/discovery', needAdmin, gate, (req, res) => { res.set('Cache-Control', 'no-store'); res.send(connectPage(req)); });
+  app.get('/app/network/connect', needAdmin, gate, (req, res) => go(res, '/app/network/discovery'));
+  app.post('/app/network/connect/rotate', needAdmin, gate, (req, res) => { companyToken(req.user.company_id, true); audit(req, 'device_link_key_rotated', ''); go(res, '/app/network/discovery', 'ok', req.i.t('Saved')); });
+
+  const hits = new Map();
+  const tooMany = (k, max) => { const n = Date.now(), a = (hits.get(k) || []).filter((x) => n - x < 60000); a.push(n); hits.set(k, a); if (hits.size > 5000) hits.clear(); return a.length > max; };
+  const MACRE = /^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/;
+  const txt = (v, m) => String(v || '').replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, m);
+  function upsert(cid, o, live) {
+    const mac = o.mac && MACRE.test(o.mac) ? o.mac.toUpperCase() : '';
+    let d = mac ? q1('SELECT * FROM devices WHERE company_id=? AND mac=?', cid, mac) : q1("SELECT * FROM devices WHERE company_id=? AND name=? AND mac=''", cid, o.name);
+    const ts = nowSql();
+    if (d) {
+      run(`UPDATE devices SET model=?, firmware=?, serial=?, ip=?${live ? ', last_ok=?, last_check=?, fails=0' : ''} WHERE id=?`, ...[o.model || d.model, o.firmware || d.firmware, o.serial || d.serial, o.ip || d.ip, ...(live ? [ts, ts] : []), d.id]);
+      return d.id;
+    }
+    const cat = o.cat;
+    if (P.checkLimit(cid, 'max_devices') || (ROUTER_CATS.includes(cat) && P.checkLimit(cid, 'max_routers')) || (AP_CATS.includes(cat) && P.checkLimit(cid, 'max_aps'))) return null;
+    const hbt = crypto.randomBytes(20).toString('hex');
+    const id = run(`INSERT INTO devices(company_id,name,category,manufacturer,model,mac,ip,serial,firmware,protocol,notes,hb_interval,hb_token,last_ok,last_check) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      cid, o.name || mac || 'MikroTik', cat, 'MikroTik', o.model || '', mac, o.ip || '', o.serial || '', o.firmware || '', live ? 'heartbeat' : 'discovered', live ? 'auto-registered' : 'auto-discovered as neighbor', 5, hbt, live ? ts : null, live ? ts : null).lastInsertRowid;
+    return id;
+  }
+  // The router calls this (POST, text/plain key=value lines). The token resolves the client server-side.
+  app.post('/api/enroll', (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    if (tooMany('ip:' + req.ip, 60)) return res.status(429).type('text').send('slow down');
+    const body = typeof req.body === 'string' ? req.body : '';
+    const kv = {}; for (const line of body.split(/\r?\n/).slice(0, 20)) { const k = line.indexOf('='); if (k > 0) kv[line.slice(0, k).trim()] = line.slice(k + 1); }
+    const tk = String(kv.token || '');
+    if (!/^mc_[0-9a-f]{48}$/.test(tk)) { tooMany('bad:' + req.ip, 1e9); return res.status(403).type('text').send('invalid key'); }
+    if ((hits.get('bad:' + req.ip) || []).length > 20) return res.status(429).type('text').send('slow down');
+    const co = q1('SELECT * FROM companies WHERE enroll_hash=?', tokHash(tk));
+    if (!co) { tooMany('bad:' + req.ip, 20); return res.status(403).type('text').send('invalid key'); }
+    if (co.status && co.status !== 'active' || !P.hasModule(co, 'network')) return res.status(403).type('text').send('not allowed');
+    if (tooMany('co:' + co.id, 30)) return res.status(429).type('text').send('slow down');
+    const cid = co.id, mac = txt(kv.mac, 17);
+    const hadRouter = q1("SELECT COUNT(*) AS n FROM devices WHERE company_id=? AND category IN ('main_router','core_router','edge_router')", cid).n;
+    const self = { name: txt(kv.name, 80) || 'MikroTik', model: txt(kv.board, 80), firmware: txt(kv.version, 60), serial: txt(kv.serial, 60), mac, ip: String(req.ip || '').replace(/^::ffff:/, '').slice(0, 45), cat: hadRouter ? 'secondary_router' : 'main_router' };
+    const existing = mac && MACRE.test(mac) ? q1('SELECT category FROM devices WHERE company_id=? AND mac=?', cid, mac.toUpperCase()) : null;
+    if (existing) self.cat = existing.category;
+    const id = upsert(cid, self, true);
+    if (id === null) return res.status(403).type('text').send('plan limit reached');
+    let added = 0;
+    for (const rec of txt(kv.nb, 4000).split(';').slice(0, 50)) {
+      const [nm, nid, plat, addr] = rec.split('|');
+      if (!nm || !MACRE.test(nm.trim())) continue;
+      const m = nm.trim().toUpperCase(); if (m === (mac || '').toUpperCase()) continue;
+      const pl = txt(plat, 40), cat = /switch|css/i.test(pl) ? 'switch' : /cap|wap|ap/i.test(pl) && /mikrotik/i.test(pl) ? 'ap' : /mikrotik/i.test(pl) ? 'secondary_router' : 'other';
+      const ip = IPV4.test((addr || '').trim()) ? addr.trim() : '';
+      if (upsert(cid, { name: txt(nid, 80) || m, mac: m, ip, model: pl, cat }, false) !== null) added++;
+    }
+    run("INSERT INTO audit_log(company_id,user_id,action,detail,ip) VALUES(?,?,?,?,?)", cid, null, 'device_auto_sync', `${self.name} (+${added} neighbors)`, req.ip);
+    res.type('text').send('ok');
   });
+
   app.get('/app/network/groups', needAdmin, gate, (req, res) => {
     const t = req.i.t, c = ctx(req), cid = req.user.company_id;
     const groups = q('SELECT * FROM device_groups WHERE company_id=? ORDER BY name', cid);

@@ -40,6 +40,7 @@ function createApp(db, opts = {}) {
   PT.bind(db);
   app.use(PT.hostGuard);
   app.use(express.urlencoded({ extended: false, limit: '400kb' }));
+  app.use('/api/enroll', express.text({ type: '*/*', limit: '16kb' }));
   try { run('DELETE FROM login_history WHERE ts<?', new Date(Date.now() - 90 * 864e5).toISOString().slice(0, 19).replace('T', ' ')); } catch { }
   const sqlTs = (ms) => new Date(ms).toISOString().slice(0, 19).replace('T', ' ');
   // persistent per-IP throttle: counts attempts recorded in login_history (survives restarts)
@@ -102,7 +103,7 @@ function createApp(db, opts = {}) {
   });
   app.use(PT.portalSession);
   app.use((req, res, next) => {
-    if (req.method === 'POST') {
+    if (req.method === 'POST' && req.path !== '/api/enroll') {
       const tok = req.body && req.body._csrf;
       if (!tok || !req.csrf || tok.length !== req.csrf.length || !crypto.timingSafeEqual(Buffer.from(tok), Buffer.from(req.csrf)))
         return res.status(403).send('Invalid CSRF token');
@@ -113,7 +114,8 @@ function createApp(db, opts = {}) {
   const ctx = (req) => ({ i: req.i, user: req.user, csrf: req.csrf, flash: req.flash, path: req.originalUrl });
   const setFlash = (res, type, msg) => res.append('Set-Cookie', `flash=${encodeURIComponent(JSON.stringify({ type, msg }))}; Path=/; HttpOnly; SameSite=Lax; Max-Age=30`);
   const go = (res, url, type, msg) => { if (type) setFlash(res, type, msg); res.redirect(303, url); };
-  const deny = (req, res, code = 403) => res.status(code).send(page(ctx(req), 'Error', `<div class="card"><h3>${req.i.t(code === 404 ? 'Not found' : 'Forbidden')}</h3></div>`));
+  const noModule = (req, res) => res.status(403).send(page(ctx(req), 'Error', `<div class="card"><h3>${req.i.t('Not included in your plan')}</h3><p>${req.i.t('This section is not part of your current plan. Open My Subscription to upgrade.')}</p><a class="btn" href="/app/subscription">${req.i.t('My Subscription')}</a></div>`));
+  const deny = (req, res, code = 403) => code === 'module' ? noModule(req, res) : res.status(code).send(page(ctx(req), 'Error', `<div class="card"><h3>${req.i.t(code === 404 ? 'Not found' : 'Forbidden')}</h3></div>`));
 
   // ---- guards
   // Two-factor is required for the super admin when REQUIRE_SUPER_2FA=1. A super admin without 2FA can still sign in with the
@@ -301,9 +303,10 @@ ${field(t('Current password'), 'current', '', { type: 'password', req: true })}$
     if (u.role === 'super_admin') return `<a href="/admin">${t('Dashboard')}</a><a href="/admin/companies">${t('Companies')}</a><a href="/admin/plans">${t('Subscription Plans & Pricing')}</a><a href="/admin/payment-methods">${t('Payment Methods')}</a><a href="/admin/payments">${t('Payments')}</a><a href="/admin/audit">${t('Audit log')}</a><a href="/admin/security">${t('Security')}</a><a href="/admin/backups">${t('Backups')}</a><a href="/admin/system">${t('System')}</a>`;
     const P0 = req.path || '';
     const grp = (label, items) => `<details class="grp"${items.some(([, u]) => P0 === u || (u.length > 5 && P0.startsWith(u + '/')) || P0 === u) ? ' open' : ''}><summary>${t(label)}</summary>${items.map(([l, u]) => `<a href="${u}">${t(l)}</a>`).join('')}</details>`;
+    const co0 = u.company_id ? q1('SELECT plan FROM companies WHERE id=?', u.company_id) : null, hm = (m) => !co0 || P.hasModule(co0, m);
     let h = `<a href="/app">${t('Dashboard')}</a>`;
     if (can(u, 'customers.view')) h += can(u, 'customers.add') ? grp('Customers', [['Customers', '/app/customers'], ['Add', '/app/customers/new']]) : `<a href="/app/customers">${t('Customers')}</a>`;
-    if (u.role === 'company_admin') h += grp('Employees', [['Employees', '/app/employees'], ['Add', '/app/employees/new']]) + `<a href="/app/packages">${t('Packages')}</a>` + grp('Vouchers', [['Voucher batches', '/app/vouchers'], ['Card templates', '/app/vouchers/templates']]) + `<a href="/app/reports">${t('Reports')}</a><a href="/app/notifications">${t('Notifications')}</a><a href="/app/finance">${t('Finance')}</a>` + grp('Network Management', DEV_PAGES.map(([k, l, u2]) => [l, u2])) + grp('My Subscription', [['My Subscription', '/app/subscription'], ['My payments', '/app/payments']]) + `<a href="/app/settings">${t('Settings')}</a>`;
+    if (u.role === 'company_admin') h += `<a href="/app/packages">${t('Packages')}</a>` + (hm('vouchers') ? grp('Vouchers', [['Voucher batches', '/app/vouchers'], ['Card templates', '/app/vouchers/templates']]) : '') + (hm('reports') ? `<a href="/app/reports">${t('Reports')}</a>` : '') + `<a href="/app/notifications">${t('Notifications')}</a><a href="/app/finance">${t('Finance')}</a>` + (hm('network') ? grp('Network Management', DEV_PAGES.map(([k, l, u2]) => [l, u2])) : '') + grp('My Subscription', [['My Subscription', '/app/subscription'], ['My payments', '/app/payments']]);
     if (can(u, 'audit.view')) h += `<a href="/app/audit">${t('Audit log')}</a>`;
     return h;
   }
