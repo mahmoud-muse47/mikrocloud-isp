@@ -4,7 +4,7 @@ const { hashPassword, verifyPassword, passwordProblem, sha } = require('./db');
 const { make } = require('./i18n');
 const V = require('./views');
 const { init: plansInit } = require('./plans');
-const { init: devicesInit } = require('./devices');
+const { init: devicesInit, PAGES: DEV_PAGES } = require('./devices');
 const { init: paymentsInit } = require('./payments');
 const { init: financeInit } = require('./finance');
 const { init: vouchersInit } = require('./vouchers');
@@ -242,9 +242,11 @@ ${field(t('Current password'), 'current', '', { type: 'password', req: true })}$
     const t = req.i.t, u = req.user;
     if (!u) return '';
     if (u.role === 'super_admin') return `<a href="/admin">${t('Dashboard')}</a><a href="/admin/companies">${t('Companies')}</a><a href="/admin/plans">${t('Subscription Plans & Pricing')}</a><a href="/admin/payment-methods">${t('Payment Methods')}</a><a href="/admin/payments">${t('Payments')}</a><a href="/admin/audit">${t('Audit log')}</a>`;
+    const P0 = req.path || '';
+    const grp = (label, items) => `<details class="grp"${items.some(([, u]) => P0 === u || (u.length > 5 && P0.startsWith(u + '/')) || P0 === u) ? ' open' : ''}><summary>${t(label)}</summary>${items.map(([l, u]) => `<a href="${u}">${t(l)}</a>`).join('')}</details>`;
     let h = `<a href="/app">${t('Dashboard')}</a>`;
-    if (can(u, 'customers.view')) h += `<a href="/app/customers">${t('Customers')}</a>`;
-    if (u.role === 'company_admin') h += `<a href="/app/employees">${t('Employees')}</a><a href="/app/packages">${t('Packages')}</a><a href="/app/vouchers">${t('Vouchers')}</a><a href="/app/reports">${t('Reports')}</a><a href="/app/notifications">${t('Notifications')}</a><a href="/app/finance">${t('Finance')}</a><a href="/app/network">${t('Network Management')}</a><a href="/app/subscription">${t('My Subscription')}</a><a href="/app/settings">${t('Settings')}</a>`;
+    if (can(u, 'customers.view')) h += can(u, 'customers.add') ? grp('Customers', [['Customers', '/app/customers'], ['Add', '/app/customers/new']]) : `<a href="/app/customers">${t('Customers')}</a>`;
+    if (u.role === 'company_admin') h += grp('Employees', [['Employees', '/app/employees'], ['Add', '/app/employees/new']]) + `<a href="/app/packages">${t('Packages')}</a>` + grp('Vouchers', [['Voucher batches', '/app/vouchers'], ['Card templates', '/app/vouchers/templates']]) + `<a href="/app/reports">${t('Reports')}</a><a href="/app/notifications">${t('Notifications')}</a><a href="/app/finance">${t('Finance')}</a>` + grp('Network Management', DEV_PAGES.map(([k, l, u2]) => [l, u2])) + grp('My Subscription', [['My Subscription', '/app/subscription'], ['My payments', '/app/payments']]) + `<a href="/app/settings">${t('Settings')}</a>`;
     if (can(u, 'audit.view')) h += `<a href="/app/audit">${t('Audit log')}</a>`;
     return h;
   }

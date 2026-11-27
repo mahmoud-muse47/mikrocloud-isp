@@ -61,7 +61,7 @@ function init(h, P) {
   const own = (req, res) => { const d = q1('SELECT * FROM devices WHERE id=? AND company_id=?', Number(req.params.id), req.user.company_id); if (!d) { deny(req, res, 404); return null; } return d; };
   const sub = (req, active, body) => {
     const t = req.i.t;
-    return `<div class="card" style="padding:10px"><div class="checks">${PAGES.map(([k, l, u]) => `<a class="btn ${k === active ? '' : 'sec'}" style="margin:2px" href="${u}">${t(l)}</a>`).join('')}</div></div>${body}`;
+    return body;
   };
   const gName = (d) => d.grp || '-';
 
@@ -229,4 +229,4 @@ ${kv('Credentials', d.cred_enc ? `${d.cred_user} / ******** (${t('encrypted')})`
   });
   return { liveStatus, evaluate, decrypt };
 }
-module.exports = { init, CATS };
+module.exports = { init, CATS, PAGES };

@@ -30,10 +30,10 @@ form.loading .spin{display:inline-block}@keyframes s{to{transform:rotate(360deg)
 .side{grid-column:2;grid-row:1;position:sticky;top:14px;background:#fff;border:1px solid var(--bd);border-radius:14px;padding:12px;font-size:15px}
 .side a{display:block;padding:11px 14px;margin:0 0 9px;border-radius:10px;background:linear-gradient(#fff,#f1f5f9);border:1px solid #cbd5e1;box-shadow:0 2px 0 #cbd5e1,0 4px 10px rgba(15,23,42,.08);color:var(--tx);font-size:15px;font-weight:500;line-height:1.3;transition:transform .08s,box-shadow .08s}
 .side a:hover{background:#eff6ff;border-color:var(--p);color:var(--p)}.side a:active{transform:translateY(2px);box-shadow:0 0 0 #cbd5e1}
-.side a.on{background:var(--p);border-color:var(--p);color:#fff;box-shadow:0 2px 0 #1d4ed8,0 4px 10px rgba(37,99,235,.35)}.side a:last-child{margin-bottom:0}
+.side summary{display:block;list-style:none;cursor:pointer;padding:11px 14px;margin:0 0 9px;border-radius:10px;background:linear-gradient(#fff,#f1f5f9);border:1px solid #cbd5e1;box-shadow:0 2px 0 #cbd5e1,0 4px 10px rgba(15,23,42,.08);color:var(--tx);font-size:15px;font-weight:500;line-height:1.3}.side summary::-webkit-details-marker{display:none}.side summary:after{content:'\\25BE';float:inline-end}.side details:not([open]) summary:after{content:'\\25B8'}.side details a{margin-inline-start:18px;font-size:14px}.side a.on{background:var(--p);border-color:var(--p);color:#fff;box-shadow:0 2px 0 #1d4ed8,0 4px 10px rgba(37,99,235,.35)}.side a:last-child{margin-bottom:0}
 @media(max-width:800px){.shell{grid-template-columns:1fr}.side{grid-column:1;grid-row:1;position:static}.shell main{grid-row:2;grid-column:1}}`;
 const js = `document.addEventListener('submit',e=>{e.target.classList&&e.target.classList.add('loading')});
-(function(){var s=document.getElementById('side');if(!s)return;var p=location.pathname,best=null;s.querySelectorAll('a').forEach(function(a){var h=a.getAttribute('href');if((p===h||(h.length>5&&p.indexOf(h)===0))&&(!best||h.length>best.getAttribute('href').length))best=a});if(best)best.className='on'})();
+(function(){var s=document.getElementById('side');if(!s)return;var p=location.pathname,best=null;s.querySelectorAll('a').forEach(function(a){var h=a.getAttribute('href');if((p===h||(h.length>5&&p.indexOf(h)===0))&&(!best||h.length>=best.getAttribute('href').length))best=a});if(best)best.className='on'})();
 function tp(id,b){var i=document.getElementById(id);i.type=i.type==='password'?'text':'password'}`;
 
 function page(ctx, title, body, nav = '') {
