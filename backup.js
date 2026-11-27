@@ -4,7 +4,7 @@
 //   DATABASE_URL=postgres://... node backup.js import  < backup.json   (target DB must be empty or fresh)
 // Plain pg_dump / pg_restore also work on the same database.
 const { open } = require('./db');
-const TABLES = ['companies', 'users', 'sessions', 'login_history', 'reset_tokens', 'reset_requests', 'customers', 'packages', 'cust_invoices', 'cust_payments', 'expenses', 'voucher_templates', 'voucher_batches', 'vouchers', 'audit_log', 'plans', 'invoices', 'payment_methods', 'payments', 'plan_requests', 'devices', 'device_alerts', 'device_groups', 'app_settings', 'deleted_companies'];
+const TABLES = ['companies', 'users', 'sessions', 'login_history', 'reset_tokens', 'reset_requests', 'tenant_domains', 'customers', 'packages', 'cust_invoices', 'cust_payments', 'expenses', 'voucher_templates', 'voucher_batches', 'vouchers', 'audit_log', 'plans', 'invoices', 'payment_methods', 'payments', 'plan_requests', 'devices', 'device_alerts', 'device_groups', 'app_settings', 'deleted_companies'];
 const url = process.env.DATABASE_URL;
 if (!url) { console.error('Set DATABASE_URL'); process.exit(1); }
 const db = open(url);

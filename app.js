@@ -9,6 +9,7 @@ const { init: paymentsInit } = require('./payments');
 const { init: financeInit } = require('./finance');
 const { init: vouchersInit } = require('./vouchers');
 const { init: reportsInit } = require('./reports');
+const makePortal = require('./portal');
 const TF = require('./twofa');
 const secureInit = require('./secure');
 const { infoGrid, esc, page, csrfField, badge, field, select } = V;
@@ -34,6 +35,9 @@ function createApp(db, opts = {}) {
   app.disable('x-powered-by');
   app.set('trust proxy', opts.trustProxy ? 1 : false);
   app.use((req, res, next) => { const h = opts.trustProxy && req.headers['cf-connecting-ip']; if (h && /^[0-9a-fA-F:.]{3,45}$/.test(h)) Object.defineProperty(req, 'ip', { value: h }); next(); });
+  const PT = makePortal({ secureCookies: opts.secureCookies });
+  PT.bind(db);
+  app.use(PT.hostGuard);
   app.use(express.urlencoded({ extended: false, limit: '400kb' }));
   try { run('DELETE FROM login_history WHERE ts<?', new Date(Date.now() - 90 * 864e5).toISOString().slice(0, 19).replace('T', ' ')); } catch { }
   const sqlTs = (ms) => new Date(ms).toISOString().slice(0, 19).replace('T', ' ');
@@ -95,6 +99,7 @@ function createApp(db, opts = {}) {
     res.setHeader('Cache-Control', 'no-store');
     next();
   });
+  app.use(PT.portalSession);
   app.use((req, res, next) => {
     if (req.method === 'POST') {
       const tok = req.body && req.body._csrf;
@@ -154,6 +159,7 @@ function createApp(db, opts = {}) {
       log(0, 'bad_password'); return fail('Invalid credentials');
     }
     if (u.status !== 'active') { log(0, 'disabled'); return fail('Invalid credentials'); }
+    if (!PT.loginAllowed(req, u)) { log(0, 'wrong_portal'); return fail('Invalid credentials'); }
     if (u.company_id) {
       const c = q1('SELECT status FROM companies WHERE id=?', u.company_id);
       if (!c || c.status === 'suspended') { log(0, 'company_suspended'); return fail('Company is suspended', 403); }
@@ -280,7 +286,7 @@ ${field(t('Current password'), 'current', '', { type: 'password', req: true })}$
   function nav(req) {
     const t = req.i.t, u = req.user;
     if (!u) return '';
-    if (u.role === 'super_admin') return `<a href="/admin">${t('Dashboard')}</a><a href="/admin/companies">${t('Companies')}</a><a href="/admin/plans">${t('Subscription Plans & Pricing')}</a><a href="/admin/payment-methods">${t('Payment Methods')}</a><a href="/admin/payments">${t('Payments')}</a><a href="/admin/audit">${t('Audit log')}</a>`;
+    if (u.role === 'super_admin') return `<a href="/admin">${t('Dashboard')}</a><a href="/admin/companies">${t('Companies')}</a><a href="/admin/plans">${t('Subscription Plans & Pricing')}</a><a href="/admin/payment-methods">${t('Payment Methods')}</a><a href="/admin/payments">${t('Payments')}</a><a href="/admin/audit">${t('Audit log')}</a><a href="/admin/security">${t('Security')}</a><a href="/admin/system">${t('System')}</a>`;
     const P0 = req.path || '';
     const grp = (label, items) => `<details class="grp"${items.some(([, u]) => P0 === u || (u.length > 5 && P0.startsWith(u + '/')) || P0 === u) ? ' open' : ''}><summary>${t(label)}</summary>${items.map(([l, u]) => `<a href="${u}">${t(l)}</a>`).join('')}</details>`;
     let h = `<a href="/app">${t('Dashboard')}</a>`;
@@ -309,6 +315,7 @@ ${field(t('Current password'), 'current', '', { type: 'password', req: true })}$
     res.send(page(c, 'Dashboard', `${rrCard}<div class="grid">${stat(comps.length, 'Total companies')}${stat(cnt('active'), 'Active companies')}${stat(cnt('trial'), 'Trial companies')}${stat(cnt('suspended'), 'Suspended companies')}${stat(cnt('expired'), 'Expired subscriptions')}${stat(customers, 'Total customers')}</div>
 <div class="card" style="margin-top:16px"><h3>${t('Recent activity')}</h3><div class="tbl"><table>${recent.map((a) => `<tr><td>${esc(a.ts)}</td><td>${esc(a.cname || '-')}</td><td>${esc(a.action)}</td><td>${esc(a.detail)}</td></tr>`).join('') || `<tr><td>${t('No results')}</td></tr>`}</table></div></div>`, nav(req)));
   });
+  PT.init({ app, db, audit, ctx, go, needSuper, nav: (req) => nav(req) });
   app.get('/admin/audit', needSuper, (req, res) => {
     const rows = q('SELECT a.*, c.name cname, u.username FROM audit_log a LEFT JOIN companies c ON c.id=a.company_id LEFT JOIN users u ON u.id=a.user_id ORDER BY a.id DESC LIMIT 200');
     res.send(page(ctx(req), 'Audit', `<div class="card tbl"><table><tr><th>Time</th><th>Company</th><th>User</th><th>Action</th><th>Detail</th><th>IP</th></tr>${rows.map((a) => `<tr><td>${esc(a.ts)}</td><td>${esc(a.cname || '-')}</td><td>${esc(a.username || '-')}</td><td>${esc(a.action)}</td><td>${esc(a.detail)}</td><td>${esc(a.ip)}</td></tr>`).join('')}</table></div>`, nav(req)));
@@ -405,7 +412,7 @@ $('plan_id').onchange=fill;$('period').onchange=upd;$('sub_start').onchange=upd;
     const acts = q('SELECT * FROM audit_log WHERE company_id=? ORDER BY id DESC LIMIT 15', co.id);
     const act = (path, label, cls = '') => `<form class="inline" method="post" action="/admin/companies/${co.id}/${path}">${csrfField(c)}<button class="${cls}">${label}</button></form>`;
     const link = req.flash && req.flash.link ? '' : '';
-    res.send(page(c, co.name, `<div class="card"><div class="head"><h3>${esc(co.name)} ${badge(statusOf(co), t)}</h3><div class="acts"><a class="btn sec" href="/admin/companies/${co.id}/export">${t('Export')}</a></div></div>
+    res.send(page(c, co.name, `<div class="card"><div class="head"><h3>${esc(co.name)} ${badge(statusOf(co), t)}</h3><div class="acts"><a class="btn sec" href="/admin/companies/${co.id}/domains">${t('Custom domains')}</a> <a class="btn sec" href="/admin/companies/${co.id}/export">${t('Export')}</a></div></div>
 ${infoGrid([[t('Plan'), esc(P.planName(P.getPlan(co.plan), req.i))], [t('Status'), badge(statusOf(co), t)], [t('Trial ends'), esc(co.trial_ends || '-')], [t('Subscription ends'), esc(co.subscription_ends || '-')], [t('Registered'), esc(String(co.created_at).slice(0, 10))], [t('Customers'), cust], [t('Owner name'), esc(co.owner_name || '-')], [t('Email'), esc(co.email)]])}
 ${co.status === 'suspended' ? `<p class="flash err">${t('Suspended')}${co.suspended_until ? ` - ${t('Auto-reactivates on')} ${esc(co.suspended_until)}` : ` - ${t('Until reactivated manually')}`}</p><p>${act('status', t('Activate'), 'ok')}</p>` : `<form method="post" action="/admin/companies/${co.id}/status" class="row" style="border:1px solid var(--bd);border-radius:12px;padding:12px;margin:12px 0">${csrfField(c)}${field(t('Suspend until (leave empty for indefinite)'), 'until', '', { type: 'date' })}${field(t('Or suspend for N days'), 'days', '', { type: 'number' })}<div style="padding-top:22px"><button class="bad">${t('Suspend')}</button></div></form>`}
 <form method="post" action="/admin/companies/${co.id}/delete" class="card" style="border:1px solid var(--bad)" onsubmit="return confirm('${t('Delete this client and all its data? A full archive copy is kept.')}')">${csrfField(c)}<h3 style="color:var(--bad)">${t('Delete client')}</h3><p class="mut">${t('Removes the client, its users, customers, invoices and devices. A full archive copy is kept in the database. Type the exact client name to confirm.')}</p>${field(t('Client name'), 'confirm_name', '')}<p><button class="bad">${t('Delete client')}</button></p></form>
@@ -458,6 +465,7 @@ ${P.adminSubscriptionCard(req, c, co)}
       run('INSERT INTO deleted_companies(company_id,name,deleted_by,snapshot) VALUES(?,?,?,?)', co.id, co.name, req.user.username, JSON.stringify(snap));
       for (const tb of ['vouchers', 'voucher_batches', 'voucher_templates', 'cust_payments', 'cust_invoices', 'expenses', 'packages', 'payments', 'device_alerts', 'device_groups', 'devices', 'plan_requests', 'invoices', 'customers']) run(`DELETE FROM ${tb} WHERE company_id=?`, co.id);
       run('DELETE FROM sessions WHERE user_id IN (SELECT id FROM users WHERE company_id=?)', co.id);
+      run('DELETE FROM tenant_domains WHERE company_id=?', co.id);
       run('DELETE FROM reset_requests WHERE user_id IN (SELECT id FROM users WHERE company_id=?)', co.id);
       run('DELETE FROM reset_tokens WHERE user_id IN (SELECT id FROM users WHERE company_id=?)', co.id);
       run('DELETE FROM users WHERE company_id=?', co.id);

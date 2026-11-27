@@ -1,3 +1,7 @@
+let BRAND = 'MikroCloud';
+const setBrand = (b) => { BRAND = b || 'MikroCloud'; };
+const getBrand = () => BRAND;
+const hostOnly = (s) => String(s || '').toLowerCase().trim().replace(/^https?:\/\//, '').replace(/[/:?#].*$/, '');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const css = `
 :root{--p:#2563eb;--bg:#f1f5f9;--card:#fff;--tx:#0f172a;--mut:#64748b;--bd:#e2e8f0;--ok:#16a34a;--bad:#dc2626;--warn:#d97706}
@@ -43,8 +47,8 @@ function page(ctx, title, body, nav = '') {
   const side = !!(user && nav && user.role !== 'super_admin');
   const other = i.lang === 'ar' ? 'en' : 'ar';
   return `<!doctype html><html lang="${i.lang}" dir="${i.rtl ? 'rtl' : 'ltr'}"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)} - MikroCloud</title><style>${css}</style></head><body class="${user && user.role !== 'super_admin' ? 'cl' : ''}">
-<header><span class="brand">MikroCloud</span>${side ? '' : nav}<span class="sp"></span>
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)} - ${esc(BRAND)}</title><style>${css}</style></head><body class="${user && user.role !== 'super_admin' ? 'cl' : ''}">
+<header><span class="brand">${esc(BRAND)}</span>${side ? '' : nav}<span class="sp"></span>
 <a href="/lang/${other}?back=${encodeURIComponent(path || '/')}">${other === 'ar' ? 'العربية' : 'English'}</a>
 ${user ? `<a href="/account">${esc(user.name)}</a><form class="inline" method="post" action="/logout"><input type="hidden" name="_csrf" value="${esc(csrf)}"><button class="sec">${t('Logout')}</button></form>` : ''}</header>
 ${side ? `<div class="shell" style="--dir:${i.rtl ? 'rtl' : 'ltr'}">` : ''}<main>${flash ? `<div class="flash ${flash.type}">${esc(flash.msg)}</div>` : ''}${body}</main>${side ? `<aside class="side" id="side">${nav}</aside></div>` : ''}<script>${js}</script></body></html>`;
@@ -63,7 +67,7 @@ function select(label, name, val, options) {
 }
 function login2fa(ctx, err) {
   const t = ctx.i.t;
-  return `<!doctype html><html lang="${ctx.i.lang}" dir="${ctx.i.rtl ? 'rtl' : 'ltr'}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MikroCloud</title><style>${css}</style></head>
+  return `<!doctype html><html lang="${ctx.i.lang}" dir="${ctx.i.rtl ? 'rtl' : 'ltr'}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(BRAND)}</title><style>${css}</style></head>
 <body class="login${ctx.admin ? '' : ' cl'}"><div class="box"><div class="logo">M</div><h2 style="text-align:center;margin:4px 0 18px">${t('Two-factor authentication')}</h2>
 ${err ? `<div class="flash err">${esc(err)}</div>` : ''}<form method="post" action="/login/2fa">${csrfField(ctx)}
 <label>${t('Authentication code')}</label><input name="code" required autofocus autocomplete="one-time-code" inputmode="numeric"><button style="width:100%;margin-top:14px">${t('Sign in')}</button></form></div></body></html>`;
@@ -71,8 +75,8 @@ ${err ? `<div class="flash err">${esc(err)}</div>` : ''}<form method="post" acti
 function login(ctx, err) {
   const t = ctx.i.t;
   const other = ctx.i.lang === 'ar' ? 'en' : 'ar';
-  return `<!doctype html><html lang="${ctx.i.lang}" dir="${ctx.i.rtl ? 'rtl' : 'ltr'}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sign in - MikroCloud</title><style>${css}</style></head>
-<body class="login${ctx.admin ? '' : ' cl'}"><div class="box"><div class="logo">M</div><h2 style="text-align:center;margin:4px 0 18px">${t('MikroCloud ISP Manager')}</h2>
+  return `<!doctype html><html lang="${ctx.i.lang}" dir="${ctx.i.rtl ? 'rtl' : 'ltr'}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sign in - ${esc(BRAND)}</title><style>${css}</style></head>
+<body class="login${ctx.admin ? '' : ' cl'}"><div class="box"><div class="logo">${esc(BRAND.slice(0, 1).toUpperCase())}</div><h2 style="text-align:center;margin:4px 0 18px">${BRAND === 'MikroCloud' ? t('MikroCloud ISP Manager') : esc(BRAND)}</h2>
 ${err ? `<div class="flash err">${esc(err)}</div>` : ''}
 <form method="post" action="/login">${csrfField(ctx)}
 <label>${t('Email or username')}</label><input name="identifier" required autofocus autocomplete="username">
@@ -81,4 +85,4 @@ ${err ? `<div class="flash err">${esc(err)}</div>` : ''}
 <p style="margin:14px 0 0"><button style="width:100%">${t('Sign in')}<span class="spin"></span></button></p></form>
 <p style="text-align:center;margin-top:14px"><a href="/forgot">${t('Forgot password?')}</a> &nbsp;|&nbsp; <a href="/lang/${other}?back=/login">${other === 'ar' ? 'العربية' : 'English'}</a></p></div><script>${js}</script></body></html>`;
 }
-module.exports = { infoGrid, esc, page, csrfField, badge, field, select, login, login2fa };
+module.exports = { setBrand, getBrand, hostOnly, infoGrid, esc, page, csrfField, badge, field, select, login, login2fa };
