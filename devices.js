@@ -69,7 +69,7 @@ ${rows.map((d) => { const st = liveStatus(d); return `<tr><td>${dot(st, t)}</td>
     const all = q('SELECT * FROM devices WHERE company_id=? ORDER BY id DESC', req.user.company_id);
     const rows = cats ? all.filter((d) => cats.includes(d.category)) : all;
     const sm = { online: 0, unknown: 0, offline: 0, unstable: 0 }; rows.forEach((d) => { sm[liveStatus(d)]++; });
-    res.send(page(c, title, sub(req, key, `<div class="card"><a class="btn" href="/app/network/discovery">${t('Connect MikroTik (automatic)')}</a> <span class="mut">${Object.entries(sm).map(([k, v]) => `${dot(k, t)} ${v}`).join(' &nbsp; ')}</span></div>${table(req, rows)}`), nav(req)));
+    res.send(page(c, title, sub(req, key, `<div class="card"><a class="btn" style="color:#fff" href="/app/network/discovery">${t('Connect MikroTik (automatic)')}</a> <span class="mut">${Object.entries(sm).map(([k, v]) => `${dot(k, t)} ${v}`).join(' &nbsp; ')}</span></div>${table(req, rows)}`), nav(req)));
   };
   app.get('/app/network', needAdmin, gate, listPage('all', 'All Devices'));
   app.get('/app/network/main-routers', needAdmin, gate, listPage('routers_main', 'Main Routers'));
@@ -235,7 +235,7 @@ ${kv('Credentials', d.cred_enc ? `${d.cred_user} / ******** (${t('encrypted')})`
 <p class="mut">${t('The script contains the private link key of this client. Do not share it. If it leaks, generate a new one: the old script stops working immediately.')}</p>
 <form method="post" action="/app/network/connect/rotate" onsubmit="return confirm('${esc(t('The old script will stop working. Continue?'))}')">${csrfField(c)}<button class="btn">${t('Generate new key')}</button></form>
 <p class="mut">${t('Devices registered so far')}: ${n}. ${t('Requires RouterOS 7 and internet access from the router. The platform cannot reach private networks, so the router calls the platform, never the other way round.')}</p></div>
-<details class="card"><summary>${t('Advanced: add a device manually')}</summary><p class="mut">${t('Only for devices that cannot run the script (for example a switch with no neighbor data).')}</p><a class="btn" href="/app/network/devices/new">${t('Add Network Device')}</a></details>`), nav(req));
+<details class="card"><summary>${t('Advanced: add a device manually')}</summary><p class="mut">${t('Only for devices that cannot run the script (for example a switch with no neighbor data).')}</p><a class="btn" style="color:#fff" href="/app/network/devices/new">${t('Add Network Device')}</a></details>`), nav(req));
   }
   app.get('/app/network/discovery', needAdmin, gate, (req, res) => { res.set('Cache-Control', 'no-store'); res.send(connectPage(req)); });
   app.get('/app/network/connect', needAdmin, gate, (req, res) => go(res, '/app/network/discovery'));
@@ -271,7 +271,7 @@ ${kv('Credentials', d.cred_enc ? `${d.cred_user} / ******** (${t('encrypted')})`
     if ((hits.get('bad:' + req.ip) || []).length > 20) return res.status(429).type('text').send('slow down');
     const co = q1('SELECT * FROM companies WHERE enroll_hash=?', tokHash(tk));
     if (!co) { tooMany('bad:' + req.ip, 20); return res.status(403).type('text').send('invalid key'); }
-    if (co.status && co.status !== 'active' || !P.hasModule(co, 'network')) return res.status(403).type('text').send('not allowed');
+    if (['suspended', 'expired', 'cancelled'].includes(co.status) || !P.hasModule(co, 'network')) return res.status(403).type('text').send('not allowed');
     if (tooMany('co:' + co.id, 30)) return res.status(429).type('text').send('slow down');
     const cid = co.id, mac = txt(kv.mac, 17);
     const hadRouter = q1("SELECT COUNT(*) AS n FROM devices WHERE company_id=? AND category IN ('main_router','core_router','edge_router')", cid).n;
