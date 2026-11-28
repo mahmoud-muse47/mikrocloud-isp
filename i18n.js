@@ -17,7 +17,7 @@ const ar = {
   'Invalid credentials':'بيانات الدخول غير صحيحة','Account locked, try later':'الحساب مقفل مؤقتاً، حاول لاحقاً','Company is suspended':'حساب العميل موقوف',
   'Too many attempts':'محاولات كثيرة، حاول لاحقاً','Saved':'تم الحفظ','Deleted':'تم الحذف','Forbidden':'غير مسموح','Not found':'غير موجود',
   'pw_short':'كلمة المرور أقل من 8 أحرف','pw_weak':'كلمة المرور لازم فيها حرف كبير وصغير ورقم','pw_mismatch':'تأكيد كلمة المرور غير مطابق',
-  'pw_wrong':'كلمة المرور الحالية غير صحيحة','required':'حقل مطلوب','duplicate':'القيمة موجودة بالفعل','Previous':'السابق','Next':'التالي',
+  'Generate password':'توليد كلمة مرور','Copy':'نسخ','Copied':'تم النسخ','Copy it now: it is shown only once.':'انسخها الآن: بتظهر مرة واحدة بس.','pw_wrong':'كلمة المرور الحالية غير صحيحة','required':'حقل مطلوب','duplicate':'القيمة موجودة بالفعل','Previous':'السابق','Next':'التالي',
   'Language':'اللغة','All':'الكل','Welcome':'مرحباً','No results':'لا توجد نتائج','Company profile':'ملف العميل','Sessions':'الجلسات',
   'Super admin':'مدير المنصة','Company admin':'مدير العميل','Employee':'موظف','Created':'تم الإنشاء','Updated':'تم التحديث',
   'Link valid for 24 hours. Give it to the client admin. It can be used once.':'الرابط صالح 24 ساعة ويُستخدم مرة واحدة. أعطه لمدير العميل.',

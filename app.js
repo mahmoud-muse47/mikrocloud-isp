@@ -376,18 +376,18 @@ ${field(t('Email'), 'email', co.email, { type: 'email' })}${field(t('Phone'), 'p
     const sec = (title, body) => `<div class="card"><h3>${t(title)}</h3><div class="row2">${body}</div></div>`;
     const limInput = (k, label) => `<div><label>${t(label)}</label><input type="number" min="0" name="lim_${k}" id="lim_${k}"><label style="display:flex;gap:6px;align-items:center;color:var(--tx);margin:2px 0"><input type="checkbox" style="width:auto" name="unl_${k}" id="unl_${k}" value="1"> ${t('Unlimited')}</label></div>`;
     return `<div class="card"><h3>${t('New company')}</h3></div><form method="post" action="/admin/companies">${csrfField(c)}
-${sec('Company Information', `${field(t('Company name'), 'name', v.name, { req: true })}${field(t('Network name'), 'network_name', v.network_name)}${field(t('Owner name'), 'owner_name', v.owner_name)}${field(t('Email'), 'email', v.email, { type: 'email' })}${field(t('Phone'), 'phone', v.phone)}${field(t('WhatsApp'), 'whatsapp', v.whatsapp)}${field(t('Country'), 'country', v.country || 'EG')}${field(t('City'), 'city', v.city)}${field(t('Address'), 'address', v.address)}`)}
-${sec('Account Information', `${field(t('Admin username'), 'admin_username', v.admin_username, { req: true })}${field(t('Admin password'), 'admin_password', '', { type: 'password', req: true })}${field(t('Confirm Password'), 'admin_confirm', '', { type: 'password', req: true })}`)}
-${sec('Subscription Configuration', `${select(t('Select Plan'), 'plan_id', '', opts.map((o) => [o.id, o.name]))}${select(t('Billing Period'), 'period', '', [['monthly', t('Monthly')]])}
+${sec('Company Information', `${field(t('Company name'), 'name', v.name, { req: true })}${field(t('Network name'), 'network_name', v.network_name, { req: true })}${field(t('Owner name'), 'owner_name', v.owner_name, { req: true })}${field(t('Email'), 'email', v.email, { type: 'email' })}${field(t('Phone'), 'phone', v.phone, { req: true })}${field(t('WhatsApp'), 'whatsapp', v.whatsapp, { req: true })}${field(t('Country'), 'country', v.country || 'EG')}${field(t('City'), 'city', v.city)}${field(t('Address'), 'address', v.address)}`)}
+${sec('Account Information', `${field(t('Admin username'), 'admin_username', v.admin_username, { req: true })}${field(t('Admin password'), 'admin_password', '', { type: 'password', req: true })}${field(t('Confirm Password'), 'admin_confirm', '', { type: 'password', req: true })}<div style="grid-column:1/-1"><button type="button" class="sec" id="genPw">${t('Generate password')}</button> <button type="button" class="sec" id="copyPw">${t('Copy')}</button> <span class="mut" id="pwNote"></span></div>`)}
+${sec('Subscription Configuration', `${select(t('Select Plan'), 'plan_id', v.plan_id || '', opts.map((o) => [o.id, o.name]))}${select(t('Billing Period'), 'period', v.period || '', [['monthly', t('Monthly')]])}
 <div><label>${t('Plan Price')}</label><input id="priceShow" readonly></div><div><label>${t('Trial Duration')}</label><input id="trialShow" readonly></div>
 ${limInput('max_admins', 'Maximum Dashboard Users')}${limInput('max_subscribers', 'Maximum Managed Subscribers')}${limInput('max_routers', 'Maximum Routers')}${limInput('max_aps', 'Maximum Access Points')}
-${field(t('Subscription Start Date'), 'sub_start', P.today(), { type: 'date' })}${field(t('Subscription Expiration Date'), 'sub_end', '', { type: 'date' })}
+${field(t('Subscription Start Date'), 'sub_start', v.sub_start || P.today(), { type: 'date' })}${field(t('Subscription Expiration Date'), 'sub_end', v.sub_end || '', { type: 'date' })}
 <div style="grid-column:1/-1"><div id="planPreview" class="stat"></div></div>`)}
-${sec('Additional Settings', `${select(t('Account Status'), 'status', 'auto', [['auto', t('Automatic (from plan)')], ['active', t('Active')], ['trial', t('Trial')], ['suspended', t('Suspended')]])}
+${sec('Additional Settings', `${select(t('Account Status'), 'status', v.status || 'auto', [['auto', t('Automatic (from plan)')], ['active', t('Active')], ['trial', t('Trial')], ['suspended', t('Suspended')]])}
 <div><label>${t('Company Logo')} (PNG/JPG, 60KB)</label><input type="file" accept="image/png,image/jpeg,image/gif,image/webp" onchange="var f=this.files[0];if(!f)return;if(f.size>60000){alert('Max 60KB');this.value='';return}var r=new FileReader();r.onload=function(){document.getElementById('logo').value=r.result};r.readAsDataURL(f)"><input type="hidden" id="logo" name="logo"></div>
 <div style="grid-column:1/-1">${field(t('Administrative Notes'), 'notes', v.notes, { ta: true })}</div>`)}
 <p><button>${t('Save')}<span class="spin"></span></button> <a class="btn sec" href="/admin/companies">${t('Cancel')}</a></p></form>
-<script>(function(){var D=${data},$=function(i){return document.getElementById(i)};var ps=$('planPreview');
+<script>(function(){var D=${data},$=function(i){return document.getElementById(i)};['plan_id','period','sub_start','sub_end','status'].forEach(function(n){var e=document.querySelector('[name='+n+']');if(e&&!e.id)e.id=n});var ps=$('planPreview');
 function cur(){return D.plans.filter(function(p){return String(p.id)===$('plan_id').value})[0]}
 function fill(){var p=cur();if(!p)return;var per=$('period');var old=per.value;per.innerHTML='';p.periods.forEach(function(x){var o=document.createElement('option');o.value=x.code;o.textContent=D.lbl[x.code]||x.code;per.appendChild(o)});if(old&&p.periods.some(function(x){return x.code===old}))per.value=old;
 ['max_admins','max_subscribers','max_routers','max_aps'].forEach(function(k){var v=p.limits[k];if(k=='max_routers'){v=1}$('lim_'+k).value=v<0?'':v;$('unl_'+k).checked=v<0});upd()}
@@ -396,7 +396,17 @@ $('priceShow').value=x.price+' '+p.cur+' / '+(D.lbl[x.code]||x.code);$('trialSho
 var s=new Date($('sub_start').value||new Date());if(!isNaN(s)){s.setDate(s.getDate()+(x.days||30));$('sub_end').value=s.toISOString().slice(0,10)}
 var L=function(k){var v=p.limits[k];return v<0?D.lbl.unl:v};
 ps.innerHTML='<b>'+p.name+'</b><br><span class="mut">'+(p.desc||'')+'</span><br>'+D.lbl.price+': '+x.price+' '+p.cur+(p.setup>0?' (+'+D.lbl.setup+' '+p.setup+')':'')+(x.code==='trial'?'<br>'+D.lbl.trialdur+': '+p.trial_days+' '+D.lbl.days:'')+'<br>'+D.lbl.admins+': '+L('max_admins')+' | '+D.lbl.subs+': '+L('max_subscribers')+' | '+D.lbl.routers+': '+L('max_routers')+' | '+D.lbl.aps+': '+L('max_aps')}
-$('plan_id').onchange=fill;$('period').onchange=upd;$('sub_start').onchange=upd;fill()})()</script>`;
+$('plan_id').onchange=fill;$('period').onchange=upd;$('sub_start').onchange=upd;fill();
+var V=${JSON.stringify(v.keep || {}).replace(/</g, '\\u003c')};
+if(V.period){$('period').value=V.period;upd()}
+['max_admins','max_subscribers','max_routers','max_aps'].forEach(function(k){if(V['lim_'+k]!==undefined)$('lim_'+k).value=V['lim_'+k];if(V['unl_'+k]!==undefined)$('unl_'+k).checked=!!V['unl_'+k]});
+if(V.sub_end)$('sub_end').value=V.sub_end;
+var gp=$('genPw'),cp=$('copyPw'),pn=$('pwNote');
+function rnd(n){var a=new Uint32Array(1);crypto.getRandomValues(a);return a[0]%n}
+function gen(){var L='abcdefghijkmnpqrstuvwxyz',U='ABCDEFGHJKLMNPQRSTUVWXYZ',N='23456789',S='@#$%&*?',all=L+U+N,o=[L[rnd(L.length)],U[rnd(U.length)],N[rnd(N.length)],S[rnd(S.length)]];while(o.length<14)o.push(all[rnd(all.length)]);for(var i=o.length-1;i>0;i--){var j=rnd(i+1),t=o[i];o[i]=o[j];o[j]=t}return o.join('')}
+if(gp)gp.onclick=function(){var p=gen(),a=document.querySelector('[name=admin_password]'),c=document.querySelector('[name=admin_confirm]');a.type='text';c.type='text';a.value=p;c.value=p;if(pn)pn.textContent=${JSON.stringify(t('Copy it now: it is shown only once.'))}};
+if(cp)cp.onclick=function(){var a=document.querySelector('[name=admin_password]');if(!a.value)return;var done=function(){if(pn)pn.textContent=${JSON.stringify(t('Copied'))}};if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(a.value).then(done,function(){a.select();document.execCommand('copy');done()})}else{a.select();document.execCommand('copy');done()}}
+})()</script>`;
   };
   app.get('/admin/companies/new', needSuper, (req, res) => {
     const c = ctx(req);
@@ -405,8 +415,8 @@ $('plan_id').onchange=fill;$('period').onchange=upd;$('sub_start').onchange=upd;
   app.post('/admin/companies', needSuper, (req, res) => {
     const t = req.i.t, b = req.body;
     const name = clean(b.name), email = clean(b.email, 200).toLowerCase(), au = clean(b.admin_username, 60).toLowerCase(), ap = String(b.admin_password || '');
-    const bad = (m) => go(res, '/admin/companies/new', 'err', t(m));
-    if (!name || !au) return bad('required');
+    const bad = (m) => { const c = ctx(req); c.flash = { type: 'err', msg: t(m) }; const keep = {}; for (const [k, x] of Object.entries(b)) if (/^(lim_|unl_)/.test(k) || ['period', 'sub_end'].includes(k)) keep[k] = String(x).slice(0, 40); res.status(422).send(page(c, 'New company', createForm(req, c, { ...Object.fromEntries(['name', 'network_name', 'owner_name', 'email', 'phone', 'whatsapp', 'country', 'city', 'address', 'admin_username', 'plan_id', 'period', 'sub_start', 'sub_end', 'status', 'notes'].map((k) => [k, String(b[k] ?? '').slice(0, 1000)])), keep }), nav(req))); };
+    if (!name || !au || !clean(b.network_name) || !clean(b.owner_name) || !clean(b.phone, 40) || !clean(b.whatsapp, 40)) return bad('required');
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return bad('required');
     const prob = passwordProblem(ap);
     if (prob) return bad(prob);

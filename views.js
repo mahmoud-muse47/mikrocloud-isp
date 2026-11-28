@@ -71,7 +71,7 @@ const infoGrid = (items) => `<div class="info">${items.map(([l, x]) => `<div><sm
 const badge = (v, t) => `<span class="badge ${esc(v)}">${esc(t(v[0].toUpperCase() + v.slice(1)))}</span>`;
 function field(label, name, val = '', opts = {}) {
   const { type = 'text', req = false, ta = false } = opts;
-  return `<div><label>${esc(label)}${req ? ' *' : ''}</label>${ta
+  return `<div><label>${esc(label)}${req ? ' <span style="color:#dc2626;font-weight:700">*</span>' : ''}</label>${ta
     ? `<textarea name="${name}" rows="3">${esc(val)}</textarea>`
     : `<input type="${type}" name="${name}" value="${esc(val)}" ${type === 'number' ? 'step="any"' : ''} ${req ? 'required' : ''} ${type === 'password' ? 'autocomplete="new-password"' : ''}>`}</div>`;
 }
