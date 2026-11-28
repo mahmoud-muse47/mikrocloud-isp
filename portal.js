@@ -56,9 +56,9 @@ module.exports = function portal(opts = {}) {
     app.get('/admin/system', needSuper, (req, res) => {
       const t = req.i.t, c = ctx(req);
       const row = (k, v) => `<tr><td>${esc(k)}</td><td>${v ? esc(v) : '<span style="color:var(--mut)">' + t('Not set') + '</span>'}</td></tr>`;
-      res.send(page(c, 'System', `<div class="card"><h3>${t('Branding')}</h3><form method="post" action="/admin/system/brand" class="row">${csrfField(c)}${field(t('Product name'), 'brand_name', V.getBrand())}<div style="padding-top:22px"><button>${t('Save')}</button></div></form></div>
+      res.send(page(c, 'System', `<div class="ph"><div><h1 class="pt">${t('System')}</h1></div></div><div class="two" style="grid-template-columns:minmax(0,2fr) minmax(0,3fr)"><div class="card"><h3>${t('Branding')}</h3><form method="post" action="/admin/system/brand" class="row">${csrfField(c)}${field(t('Product name'), 'brand_name', V.getBrand())}<div style="padding-top:22px"><button>${t('Save')}</button></div></form></div>
 <div class="card tbl"><h3>${t('Domain configuration (environment)')}</h3><table>${row('APP_NAME', cfg.appName)}${row('APP_URL', cfg.appUrl)}${row('ADMIN_DOMAIN', cfg.adminDomain)}${row('CLIENT_DOMAIN', cfg.clientDomain)}${row('ALLOWED_HOSTS', cfg.allowedHosts.join(', '))}${row('SESSION_DOMAIN', cfg.sessionDomain)}${row('FORCE_HTTPS', cfg.forceHttps ? 'on' : 'off')}</table>
-<p style="color:var(--mut)">${t('Change these in the hosting environment, no code change needed. When ADMIN_DOMAIN and CLIENT_DOMAIN are set, every other hostname is rejected unless it is in ALLOWED_HOSTS or is a verified client domain.')}</p></div>`, nav(req)));
+<p style="color:var(--mut)">${t('Change these in the hosting environment, no code change needed. When ADMIN_DOMAIN and CLIENT_DOMAIN are set, every other hostname is rejected unless it is in ALLOWED_HOSTS or is a verified client domain.')}</p></div></div>`, nav(req)));
     });
     app.post('/admin/system/brand', needSuper, (req, res) => {
       const n = String(req.body.brand_name || '').trim().slice(0, 60);
@@ -108,7 +108,10 @@ module.exports = function portal(opts = {}) {
     // ---- Encrypted backups
     app.get('/admin/backups', needSuper, (req, res) => {
       const t = req.i.t, c = ctx(req), rows = AB.list();
-      res.send(page(c, 'Backups', `<div class="card"><h3>${t('Encrypted backups')}</h3><p style="color:var(--mut)">${t('A backup is made automatically every 24 hours, encrypted with a key derived from DATA_KEY, and the last 14 are kept. Each one is checked right after it is made (decrypt, parse, row counts). Files are downloaded still encrypted.')}</p>
+      const last = rows[0], okc = rows.filter((r) => r.verified).length;
+      res.send(page(c, 'Backups', `<div class="ph"><div><h1 class="pt">${t('Backups')}</h1></div><form method="post" action="/admin/backups/run">${csrfField(c)}<button>${t('Back up now')}</button></form></div>
+<div class="sum"><div><small>${t('Last backup')}</small><b style="font-size:15px">${last ? esc(last.created_at) : '-'}</b></div><div><small>${t('Backups kept')}</small><b>${rows.length}</b></div><div><small>${t('Checked')}</small><b>${okc}/${rows.length}</b></div><div><small>${t('Off-site copy')}</small><b>${process.env.BACKUP_GITHUB_REPO && process.env.BACKUP_GITHUB_TOKEN ? t('on') : t('off (not configured)')}</b></div></div>
+<div class="card"><h3>${t('Encrypted backups')}</h3><p style="color:var(--mut)">${t('A backup is made automatically every 24 hours, encrypted with a key derived from DATA_KEY, and the last 14 are kept. Each one is checked right after it is made (decrypt, parse, row counts). Files are downloaded still encrypted.')}</p>
 <p style="color:var(--mut)">${t('Off-site copy')}: ${process.env.BACKUP_GITHUB_REPO && process.env.BACKUP_GITHUB_TOKEN ? t('on') : t('off (not configured)')}</p>
 <form method="post" action="/admin/backups/run">${csrfField(c)}<button>${t('Back up now')}</button></form></div>
 <div class="card tbl"><table><tr><th>#</th><th>${t('Time')}</th><th>${t('Type')}</th><th>${t('Size')}</th><th>${t('Checked')}</th><th>${t('Off-site copy')}</th><th></th></tr>${rows.map((r) => `<tr><td>${r.id}</td><td>${esc(r.created_at)}</td><td>${esc(r.kind)}</td><td>${Math.round(r.size / 1024)} KB</td><td>${r.verified ? 'OK' : '<b style="color:var(--bad)">!</b>'} <span style="color:var(--mut)">${esc(r.note)}</span></td><td>${esc(r.offsite || '-')}</td><td><a href="/admin/backups/${r.id}/download">${t('Download')}</a></td></tr>`).join('') || `<tr><td colspan="7">${t('No results')}</td></tr>`}</table></div>
@@ -140,15 +143,15 @@ module.exports = function portal(opts = {}) {
       const lb = AB.latest();
       const rec = q('SELECT ts, identifier, reason, ip FROM login_history WHERE success=0 ORDER BY id DESC LIMIT 15');
       const chk = (ok, label, note = '') => `<tr><td>${ok ? '<b style="color:var(--ok)">OK</b>' : '<b style="color:var(--bad)">!</b>'}</td><td>${t(label)}</td><td style="color:var(--mut)">${note ? t(note) : ''}</td></tr>`;
-      const stat = (v, l) => `<div class="stat"><b>${v}</b><span>${t(l)}</span></div>`;
-      res.send(page(c, 'Security', `<div class="grid">${stat(fails, 'Failed logins (24h)')}${stat(oks, 'Successful logins (24h)')}${stat(locked.length, 'Locked accounts')}${stat(ips.length, 'Suspicious IPs')}${stat(resets, 'Open reset requests')}${stat(devAuth, 'Device alerts (24h)')}</div>
+      const stat = (v, l) => `<div><small>${t(l)}</small><b>${v}</b></div>`;
+      res.send(page(c, 'Security', `<div class="ph"><div><h1 class="pt">${t('Security')}</h1></div></div><div class="sum">${stat(fails, 'Failed logins (24h)')}${stat(oks, 'Successful logins (24h)')}${stat(locked.length, 'Locked accounts')}${stat(ips.length, 'Suspicious IPs')}${stat(resets, 'Open reset requests')}${stat(devAuth, 'Device alerts (24h)')}</div>
 <div class="card tbl" style="margin-top:16px"><h3>${t('Security controls')}</h3><table>
 ${chk(!!opts.secureCookies, 'Secure cookies and HSTS', 'Turn on COOKIE_SECURE')}${chk(!!process.env.DATA_KEY, 'Dedicated encryption key (DATA_KEY)', 'Set DATA_KEY in the environment')}${chk(sup.every((s) => s.totp_on), 'Two-factor on every Super Admin', 'Enable 2FA in Account')}${chk(!!requireSuper2fa, 'Two-factor required for Super Admin', 'Set REQUIRE_SUPER_2FA=1')}${chk(!!(cfg.adminDomain && cfg.clientDomain), 'Separate Admin and Client domains', 'Set ADMIN_DOMAIN and CLIENT_DOMAIN after buying a domain')}${chk(cfg.forceHttps, 'HTTP to HTTPS redirect (app level)', 'Set FORCE_HTTPS=1')}
 ${chk(!!lb && !!lb.verified && Date.now() - Date.parse(lb.created_at.replace(' ', 'T') + 'Z') < 36 * 3600e3, 'Encrypted backup in the last 36 hours, checked', lb ? 'Last: ' + lb.created_at : 'No backup yet')}${chk(!!(process.env.BACKUP_GITHUB_REPO && process.env.BACKUP_GITHUB_TOKEN), 'Off-site backup copy', 'Needs BACKUP_GITHUB_REPO and BACKUP_GITHUB_TOKEN')}
 <tr><td><b style="color:var(--warn)">?</b></td><td>${t('Vulnerability scan results')}</td><td style="color:var(--mut)">${t('No scanner connected. Dependency audit is run manually.')}</td></tr></table></div>
-<div class="card tbl"><h3>${t('Suspicious IPs (5+ failures in 24h)')}</h3><table>${ips.map((r) => `<tr><td>${esc(r.ip)}</td><td>${r.n}</td></tr>`).join('') || `<tr><td>${t('No results')}</td></tr>`}</table></div>
+<div class="two" style="grid-template-columns:1fr 1fr"><div class="card tbl"><h3>${t('Suspicious IPs (5+ failures in 24h)')}</h3><table>${ips.map((r) => `<tr><td>${esc(r.ip)}</td><td>${r.n}</td></tr>`).join('') || `<tr><td>${t('No results')}</td></tr>`}</table></div>
 <div class="card tbl"><h3>${t('Locked accounts')}</h3><table>${locked.map((r) => `<tr><td>${esc(r.username)}</td><td>${esc(sqlTs(r.locked_until))}</td></tr>`).join('') || `<tr><td>${t('No results')}</td></tr>`}</table></div>
-<div class="card tbl"><h3>${t('Recent failed logins')}</h3><table>${rec.map((r) => `<tr><td>${esc(r.ts)}</td><td>${esc(r.identifier)}</td><td>${esc(r.reason)}</td><td>${esc(r.ip)}</td></tr>`).join('') || `<tr><td>${t('No results')}</td></tr>`}</table></div>
+</div><div class="card tbl"><h3>${t('Recent failed logins')}</h3><table>${rec.map((r) => `<tr><td>${esc(r.ts)}</td><td>${esc(r.identifier)}</td><td>${esc(r.reason)}</td><td>${esc(r.ip)}</td></tr>`).join('') || `<tr><td>${t('No results')}</td></tr>`}</table></div>
 <div class="card tbl"><h3>${t('Privilege and configuration changes')}</h3><table>${priv.map((r) => `<tr><td>${esc(r.ts)}</td><td>${esc(r.action)}</td><td>${esc(r.detail)}</td><td>${esc(r.ip)}</td></tr>`).join('') || `<tr><td>${t('No results')}</td></tr>`}</table></div>`, nav(req)));
     });
   };

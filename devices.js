@@ -32,6 +32,7 @@ function init(h, P) {
   // status is derived ONLY from heartbeat results: never "online" just because a record exists
   function liveStatus(d) {
     if (!d.last_ok) return 'unknown';
+    if (d.protocol === 'heartbeat') return RS.rtStatus(d.last_ok).st;
     const iv = Math.max(1, d.hb_interval || 5), age = (Date.now() - new Date(d.last_ok.replace(' ', 'T') + 'Z').getTime()) / 60000;
     return age <= iv * 2 ? 'online' : age <= iv * 5 ? 'unstable' : 'offline';
   }
@@ -226,17 +227,31 @@ ${kv('Credentials', d.cred_enc ? `${d.cred_user} / ******** (${t('encrypted')})`
 /system scheduler add name=mikrocloud interval=5m on-event="/system script run mikrocloud" start-time=startup policy=read,test,policy
 /system script run mikrocloud
 `;
+  const DOT = { online: '#16a34a', unstable: '#eab308', offline: '#dc2626', none: '#9ca3af' };
+  const STL = { online: 'Online', unstable: 'Unstable', offline: 'Offline', none: 'Not linked' };
+  const ago = (m, t) => m === null || m === undefined ? '-' : m < 1 ? t('just now') : m < 60 ? `${m} ${t('min ago')}` : m < 1440 ? `${Math.floor(m / 60)} ${t('h ago')}` : `${Math.floor(m / 1440)} ${t('d ago')}`;
+  function linkInfo(cid) {
+    const d = q1("SELECT MAX(last_ok) AS m, COUNT(*) AS n FROM devices WHERE company_id=? AND protocol='heartbeat'", cid);
+    const r = RS.rtStatus(d && d.m), sy = q1('SELECT MAX(seen_at) AS m FROM router_items WHERE company_id=?', cid), ak = q1("SELECT MAX(done_at) AS m FROM router_cmds WHERE company_id=? AND status IN ('done','failed')", cid);
+    const mins = (v) => v ? RS.rtStatus(v).ago : null;
+    return { st: r.st, ago: r.ago, sync: mins(sy && sy.m), ack: mins(ak && ak.m), n: d ? d.n : 0 };
+  }
+  const dotHtml = (st, t, big) => `<span title="${esc(t(STL[st]))}" style="display:inline-block;width:${big ? 16 : 12}px;height:${big ? 16 : 12}px;border-radius:50%;background:${DOT[st]};box-shadow:0 0 0 3px ${DOT[st]}33;vertical-align:middle"></span>`;
+  // status card shown on the client connect page and the super admin client page
+  const linkCard = (cid, t) => { const L = linkInfo(cid); return `<div class="card"><h3>${dotHtml(L.st, t, true)} ${t('Router connection')}: <b>${t(STL[L.st])}</b></h3>
+<p class="mut">${L.st === 'none' ? t('No router has linked yet. Paste the install line below into the MikroTik terminal.') : `${t('Last seen')}: ${ago(L.ago, t)} &middot; ${t('Last data sync')}: ${ago(L.sync, t)} &middot; ${t('Last command result')}: ${ago(L.ack, t)}`}</p></div>`; };
   function connectPage(req, shown) {
-    const t = req.i.t, c = ctx(req), base = `${req.protocol}://${req.get('host')}`;
-    const tk = companyToken(req.user.company_id, false), sc = RS.fullScript(base, tk);
+    const t = req.i.t, c = ctx(req), base = RS.publicBase(req);
+    const tk = companyToken(req.user.company_id, false), sc = RS.fullScript(base, tk), line = RS.installLine(base, tk);
     const n = q1('SELECT COUNT(*) AS n FROM devices WHERE company_id=?', req.user.company_id).n;
-    return page(c, 'Connect MikroTik', sub(req, 'discovery', `<div class="card"><h3>${t('Connect your MikroTik (automatic)')}</h3>
-<ol><li>${t('Open WinBox or SSH and open New Terminal on your MikroTik.')}</li><li>${t('Copy the script below and paste it into the terminal, then press Enter.')}</li><li>${t('Within a minute the router appears in the list by itself, and devices it sees as neighbors are added as well. Status comes from the heartbeat the router sends every 5 minutes.')}</li></ol>
-<textarea id="mcscript" readonly rows="16" style="width:100%;font-family:monospace;direction:ltr;text-align:left" onfocus="this.select()">${esc(sc)}</textarea>
-<p><button class="btn" type="button" onclick="var e=document.getElementById('mcscript');e.select();navigator.clipboard&&navigator.clipboard.writeText(e.value);this.textContent='${esc(t('Copied'))}'">${t('Copy script')}</button></p>
-<p class="mut">${t('The script contains the private link key of this client. Do not share it. If it leaks, generate a new one: the old script stops working immediately.')}</p>
+    return page(c, 'Connect MikroTik', sub(req, 'discovery', `${linkCard(req.user.company_id, t)}<div class="card"><h3>${t('Connect your MikroTik (automatic)')}</h3>
+<ol><li>${t('Open WinBox or SSH and open New Terminal on your MikroTik.')}</li><li>${t('Copy the install line below, paste it into the terminal and press Enter.')}</li><li>${t('The terminal prints the checks. LINKED OK means the router is registered; if it prints FAILED, it also prints the reason and the fix. The status above turns green within a minute.')}</li></ol>
+<textarea id="mcscript" readonly rows="3" style="width:100%;font-family:monospace;direction:ltr;text-align:left" onfocus="this.select()">${esc(line)}</textarea>
+<p><button class="btn" type="button" onclick="var e=document.getElementById('mcscript');e.select();navigator.clipboard&&navigator.clipboard.writeText(e.value);this.textContent='${esc(t('Copied'))}'">${t('Copy install line')}</button></p>
+<p class="mut">${t('The line contains the private link key of this client. Do not share it. If it leaks, generate a new one: the old key stops working immediately.')}</p>
 <form method="post" action="/app/network/connect/rotate" onsubmit="return confirm('${esc(t('The old script will stop working. Continue?'))}')">${csrfField(c)}<button class="btn">${t('Generate new key')}</button></form>
-<p class="mut">${t('Devices registered so far')}: ${n}. ${t('Requires RouterOS 7 and internet access from the router. The platform cannot reach private networks, so the router calls the platform, never the other way round.')}</p></div>
+<p class="mut">${t('Devices registered so far')}: ${n}. ${t('Works on RouterOS 6 and 7. The router needs internet access. The platform cannot reach private networks, so the router calls the platform, never the other way round.')}</p></div>
+<details class="card"><summary>${t('Show the full script (about')} ${(sc.length / 1024).toFixed(1)} KB)</summary><textarea readonly rows="14" style="width:100%;font-family:monospace;direction:ltr;text-align:left" onfocus="this.select()">${esc(sc)}</textarea></details>
 <details class="card"><summary>${t('Advanced: add a device manually')}</summary><p class="mut">${t('Only for devices that cannot run the script (for example a switch with no neighbor data).')}</p><a class="btn" style="color:#fff" href="/app/network/devices/new">${t('Add Network Device')}</a></details>`), nav(req));
   }
   app.get('/app/network/discovery', needAdmin, gate, (req, res) => { res.set('Cache-Control', 'no-store'); res.send(connectPage(req)); });
@@ -328,7 +343,7 @@ ${kv('Credentials', d.cred_enc ? `${d.cred_user} / ******** (${t('encrypted')})`
     const rows = q("SELECT * FROM audit_log WHERE company_id=? AND action LIKE 'device_%' AND (action LIKE ? OR detail LIKE ?) ORDER BY id DESC LIMIT 200", req.user.company_id, `%${s}%`, `%${s}%`);
     res.send(page(c, 'Device Activity Logs', sub(req, 'logs', `<div class="card"><form method="get" class="row"><div><input name="q" value="${esc(s)}" placeholder="${t('Search')}"></div><div><button>${t('Search')}</button></div></form></div><div class="card tbl" data-autorefresh="1"><table><tr><th>${t('Time')}</th><th>${t('Action')}</th><th>${t('Detail')}</th></tr>${rows.map((a) => `<tr><td>${esc(a.ts)}</td><td>${esc(a.action)}</td><td>${esc(a.detail)}</td></tr>`).join('') || `<tr><td colspan="3">${t('No results')}</td></tr>`}</table></div>`), nav(req)));
   });
-  return { liveStatus, evaluate, decrypt };
+  return { liveStatus, evaluate, decrypt, linkInfo, linkCard, dotHtml, ago, STL };
 }
 
 // MikroTik detection (display only): manufacturer text, model family, or a MikroTik MAC prefix (OUI)

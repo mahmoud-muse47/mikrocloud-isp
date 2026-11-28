@@ -9,5 +9,8 @@ module.exports = {
   'Reset link issued': 'إصدار رابط استعادة', 'Password reset completed': 'اكتملت استعادة كلمة المرور', 'Password set by admin': 'تعيين كلمة مرور بواسطة المدير',
   'Password change failed': 'فشل تغيير كلمة المرور', 'Other sessions signed out': 'إنهاء الجلسات الأخرى', 'Subscriber added': 'إضافة مشترك',
   'Subscriber updated': 'تعديل مشترك', 'Subscriber deleted': 'حذف مشترك', 'Subscribers exported': 'تصدير المشتركين', 'Employee added': 'إضافة موظف',
-  'Employee deleted': 'حذف موظف', 'Employee updated': 'تعديل موظف', 'Limit reached': 'تم بلوغ الحد', 'Viewed as client': 'عرض كعميل'
+  'Employee deleted': 'حذف موظف', 'Employee updated': 'تعديل موظف', 'Limit reached': 'تم بلوغ الحد', 'Viewed as client': 'عرض كعميل',
+  'Owner Information': 'بيانات المالك', 'Contact Information': 'بيانات التواصل', 'Account Credentials': 'بيانات الدخول',
+  'Fields marked with * are required': 'الحقول التي عليها * مطلوبة', 'Back': 'رجوع', 'Danger zone': 'منطقة الخطر',
+  'Last backup': 'آخر نسخة', 'Backups kept': 'النسخ المحفوظة'
 };

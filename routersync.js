@@ -18,99 +18,108 @@ const KINDS = {
 const ACTIONS = { ppp_disable: 'ppp_secret', ppp_enable: 'ppp_secret', ppp_kick: 'ppp_active', ppp_profile: 'ppp_secret', hs_disable: 'hs_user', hs_enable: 'hs_user', hs_kick: 'hs_active' };
 const ACTION_LABEL = { ppp_disable: 'Disable PPPoE user', ppp_enable: 'Enable PPPoE user', ppp_kick: 'Disconnect PPPoE session', ppp_profile: 'Change PPPoE profile', hs_disable: 'Disable hotspot user', hs_enable: 'Enable hotspot user', hs_kick: 'Disconnect hotspot session' };
 const clean = (v, m) => String(v ?? '').replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, m);
+const publicBase = (req) => (process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || 'https://' + req.get('host')).replace(/\/+$/, '').replace(/^http:\/\//, 'https://');
 const sha = (s) => crypto.createHash('sha256').update(s).digest('hex');
 
-// ---------- RouterOS script generator (router pushes, router pulls) ----------
-function loopFor(kind, base, tok) {
-  const [, menu, props] = KINDS[kind];
-  const gets = props.map(([, p], i) => `    :local v${i} ""; :do {:set v${i} [${menu} get $i ${p}]} on-error={}`).join('\n');
-  const row = props.map((_, i) => `$v${i}`).join(' . "|" . ');
-  const send = (fin) => `/tool fetch url="${base}/api/router/sync" http-method=post http-header-field="Content-Type: text/plain" http-data=("token=${tok}\\nmac=" . $mac . "\\nname=" . $idn . "\\nkind=${kind}\\nbatch=" . $batch . "\\nfinal=${fin}\\n" . $rows) keep-result=no`;
-  return `  :set rows ""; :set cnt 0; :set batch [:rndnum from=1 to=999999999]
-  :do {
-  :foreach i in=[${menu} find] do={
-${gets}
-    :set rows ($rows . "r=" . ${row} . "\\n"); :set cnt ($cnt + 1)
-    :if ($cnt >= 20) do={ :do {${send(0)}} on-error={}; :set rows ""; :set cnt 0 }
-  }
-  } on-error={}
-  :do {${send(1)}} on-error={}`;
-}
-function syncScript(base, tok) {
-  const loops = Object.keys(KINDS).map((k) => `  # ${KINDS[k][0]}\n${loopFor(k, base, tok)}`).join('\n');
-  return `{
-  :local rows ""; :local cnt 0; :local batch 0
-  :local idn [/system identity get name]
-  :local mac ""; :do {:set mac [/interface ethernet get [:pick [/interface ethernet find] 0] mac-address]} on-error={}
-${loops}
-}`;
-}
-function cmdScript(base, tok) {
-  return `{
-  :local idn [/system identity get name]
-  :local mac ""; :do {:set mac [/interface ethernet get [:pick [/interface ethernet find] 0] mac-address]} on-error={}
-  :local res ""
-  :do {:set res [/tool fetch url="${base}/api/router/cmds" http-method=post http-header-field="Content-Type: text/plain" http-data=("token=${tok}\\nmac=" . $mac . "\\nname=" . $idn) output=user as-value]} on-error={}
-  :local data ""; :do {:set data ($res->"data")} on-error={}
-  :local acks ""
-  :while ([:len $data] > 0) do={
-    :local p [:find $data ";"]
-    :if ([:typeof $p] = "nil") do={ :set p [:len $data] }
-    :local line [:pick $data 0 $p]
-    :set data ($p >= [:len $data] ? "" : [:pick $data ($p + 1) [:len $data]])
-    :local a [:find $line "|"]
-    :local id [:pick $line 0 $a]; :local rest [:pick $line ($a + 1) [:len $line]]
-    :local b [:find $rest "|"]; :local act [:pick $rest 0 $b]; :set rest [:pick $rest ($b + 1) [:len $rest]]
-    :local c [:find $rest "|"]; :local n [:pick $rest 0 $c]; :local arg [:pick $rest ($c + 1) [:len $rest]]
-    :local ok 1
-    :do {
-      :if ($act = "ppp_disable") do={ /ppp secret set [find name=$n] disabled=yes; /ppp active remove [find name=$n] }
-      :if ($act = "ppp_enable") do={ /ppp secret set [find name=$n] disabled=no }
-      :if ($act = "ppp_kick") do={ /ppp active remove [find name=$n] }
-      :if ($act = "ppp_profile") do={ /ppp secret set [find name=$n] profile=$arg; /ppp active remove [find name=$n] }
-      :if ($act = "hs_disable") do={ /ip hotspot user set [find name=$n] disabled=yes; /ip hotspot active remove [find user=$n] }
-      :if ($act = "hs_enable") do={ /ip hotspot user set [find name=$n] disabled=no }
-      :if ($act = "hs_kick") do={ /ip hotspot active remove [find user=$n] }
-    } on-error={ :set ok 0 }
-    :set acks ($acks . "a=" . $id . "|" . $ok . "\\n")
-  }
-  :if ([:len $acks] > 0) do={ :do {/tool fetch url="${base}/api/router/ack" http-method=post http-header-field="Content-Type: text/plain" http-data=("token=${tok}\\nmac=" . $mac . "\\nname=" . $idn . "\\n" . $acks) keep-result=no} on-error={} }
-}`;
-}
-// full paste block: identity heartbeat (existing) + sync + command pull
+// ---------- RouterOS installer script (served as /r/<key>.rsc). One script + one scheduler, RouterOS v6 and v7. ----------
 function fullScript(base, tok) {
-  const hb = `{
-  :local bd ""; :local sn ""; :local mac ""; :local nb ""
-  :foreach i in=[/ip neighbor find] do={
-    :local m ""; :local n ""; :local p ""; :local a ""
-    :do {:set m [/ip neighbor get $i mac-address]} on-error={}
-    :do {:set n [/ip neighbor get $i identity]} on-error={}
-    :do {:set p [/ip neighbor get $i platform]} on-error={}
-    :do {:set a [/ip neighbor get $i address]} on-error={}
-    :set nb ($nb . $m . "|" . $n . "|" . $p . "|" . $a . ";")
-  }
-  :do {:set bd [/system resource get board-name]} on-error={}
-  :do {:set sn [/system routerboard get serial-number]} on-error={}
-  :do {:set mac [/interface ethernet get [:pick [/interface ethernet find] 0] mac-address]} on-error={}
-  :local body ("token=${tok}\\nname=" . [/system identity get name] . "\\nboard=" . $bd . "\\nversion=" . [/system resource get version] . "\\nserial=" . $sn . "\\nmac=" . $mac . "\\nnb=" . $nb)
-  :do {/tool fetch url="${base}/api/enroll" http-method=post http-header-field="Content-Type: text/plain" http-data=$body keep-result=no} on-error={:log warning "MikroCloud: send failed"}
+  const K = Object.entries(KINDS).map(([k, v]) => `"${k}"="${v[1]} print as-value:${v[2].map((c) => c[1]).join(',')}"`).join(';\n  ');
+  const host = base.replace(/^https?:\/\//, '');
+  const main = `{
+:global mcN
+:if ([:typeof $mcN]!="num") do={:set mcN 0}
+:set mcN ($mcN+1)
+:local H "${base}"
+:local T "${tok}"
+:local j
+:local say do={:put $m; :log info ("MikroCloud: ".$m)}
+:local id [/system identity get name]
+:local mac ""
+:do {:set mac [/interface ethernet get [:pick [/interface ethernet find] 0] mac-address]} on-error={}
+:local pre ("token=".$T."\\nmac=".$mac."\\nname=".$id."\\n")
+:local S do={:local r "!"; :do {:local x [/tool fetch url=$u http-method=post http-header-field="Content-Type: text/plain" http-data=$d output=user as-value]; :set r ($x->"data")} on-error={}; :return $r}
+:if (($mcN % 5)=1) do={
+:local bd ""; :local sn ""; :local nb ""
+:do {:set bd [/system resource get board-name]} on-error={}
+:do {:set sn [/system routerboard get serial-number]} on-error={}
+:do {:foreach n in=[/ip neighbor print as-value] do={:set nb ($nb.($n->"mac-address")."|".($n->"identity")."|".($n->"platform")."|".($n->"address").";")}} on-error={}
+:local r [$S u=($H."/api/enroll") d=($pre."board=".$bd."\\nversion=".[/system resource get version]."\\nserial=".$sn."\\nnb=".$nb)]
+:if ($r="!") do={
+$say m="FAILED: could not register with MikroCloud."
+:do {:resolve "${host}"} on-error={$say m="- DNS cannot resolve ${host}. Fix: /ip dns set servers=8.8.8.8"}
+:do {:if ([/system device-mode get fetch]=false) do={$say m="- device-mode blocks fetch. Fix: /system device-mode update fetch=yes scheduler=yes (confirm on the device)"}} on-error={}
+:local up 1
+:do {/tool fetch url=($H."/api/router/ping") output=none} on-error={:set up 0; $say m="- cannot reach the site over https. Check internet, firewall and /system clock."}
+:if ($up=1) do={$say m="- site reachable but the key was refused: wrong key, client suspended or plan limit. Get a new key from the client page."}
+} else={
+:if ($mcN=1) do={$say m="LINKED OK: registered. It shows Online on the panel within a minute."}
+:local K {
+  ${K}
+}
+:foreach k,v in=$K do={
+:local i [:find $v ":"]
+:local cmd [:parse [:pick $v 0 $i]]
+:local pr [:toarray [:pick $v ($i+1) [:len $v]]]
+:local rows ""; :local n 0; :local b [:rndnum from=1 to=999999999]
+:do {:foreach e in=[$cmd] do={
+:local ln ""; :local sp ""
+:foreach p in=$pr do={:set ln ($ln.$sp.($e->$p)); :set sp "|"}
+:set rows ($rows."r=".$ln."\\n"); :set n ($n+1)
+:if ($n>=15) do={:set j [$S u=($H."/api/router/sync") d=($pre."kind=".$k."\\nbatch=".$b."\\nfinal=0\\n".$rows)]; :set rows ""; :set n 0}
+}} on-error={}
+:set j [$S u=($H."/api/router/sync") d=($pre."kind=".$k."\\nbatch=".$b."\\nfinal=1\\n".$rows)]
+}
+}
+}
+:local r [$S u=($H."/api/router/cmds") d=$pre]
+:if ($r!="!" && [:len $r]>0) do={
+:local acks ""
+:foreach c in=[:toarray $r] do={
+:local a [:find $c "|"]
+:local cid [:pick $c 0 $a]
+:local rest [:pick $c ($a+1) [:len $c]]
+:local b [:find $rest "|"]
+:local act [:pick $rest 0 $b]
+:set rest [:pick $rest ($b+1) [:len $rest]]
+:local d [:find $rest "|"]
+:local nm [:pick $rest 0 $d]
+:local arg [:pick $rest ($d+1) [:len $rest]]
+:local ok 1
+:do {
+:if ($act="ppp_disable") do={/ppp secret set [find name=$nm] disabled=yes comment="mikrocloud"; /ppp active remove [find name=$nm]}
+:if ($act="ppp_enable") do={/ppp secret set [find name=$nm] disabled=no}
+:if ($act="ppp_kick") do={/ppp active remove [find name=$nm]}
+:if ($act="ppp_profile") do={/ppp secret set [find name=$nm] profile=$arg; /ppp active remove [find name=$nm]}
+:if ($act="hs_disable") do={/ip hotspot user set [find name=$nm] disabled=yes; /ip hotspot active remove [find user=$nm]}
+:if ($act="hs_enable") do={/ip hotspot user set [find name=$nm] disabled=no}
+:if ($act="hs_kick") do={/ip hotspot active remove [find user=$nm]}
+} on-error={:set ok 0}
+:set acks ($acks."a=".$cid."|".$ok."\\n")
+}
+:set j [$S u=($H."/api/router/ack") d=($pre.$acks)]
+}
 }`;
-  return `# MikroCloud link - paste the WHOLE block into the MikroTik terminal (RouterOS 7). Needs internet access from the router.
+  return `:put "MikroCloud: installing..."
+:do {:if ([/system device-mode get scheduler]=false) do={:put "STOP: device-mode blocks scheduler/fetch. Run /system device-mode update fetch=yes scheduler=yes, confirm on the device, then paste again."}} on-error={}
+:global mcN 0
 /system script remove [find name=mikrocloud]
 /system script remove [find name=mikrocloud-sync]
 /system script remove [find name=mikrocloud-cmd]
-/system script add name=mikrocloud policy=read,write,test,policy source=${hb}
-/system script add name=mikrocloud-sync policy=read,write,test,policy source=${syncScript(base, tok)}
-/system script add name=mikrocloud-cmd policy=read,write,test,policy source=${cmdScript(base, tok)}
 /system scheduler remove [find name=mikrocloud]
 /system scheduler remove [find name=mikrocloud-sync]
 /system scheduler remove [find name=mikrocloud-cmd]
-/system scheduler add name=mikrocloud interval=5m on-event="/system script run mikrocloud" start-time=startup policy=read,write,test,policy
-/system scheduler add name=mikrocloud-sync interval=5m on-event="/system script run mikrocloud-sync" start-time=startup policy=read,write,test,policy
-/system scheduler add name=mikrocloud-cmd interval=1m on-event="/system script run mikrocloud-cmd" start-time=startup policy=read,write,test,policy
+/system script add name=mikrocloud policy=read,write,test,policy source=${main}
+/system scheduler add name=mikrocloud interval=1m start-time=startup on-event="/system script run mikrocloud" policy=read,write,test,policy
+:put ("MikroCloud: RouterOS ".[/system resource get version].", checking the connection...")
 /system script run mikrocloud
 `;
 }
+const installLine = (base, tok) => `/tool fetch url="${base}/r/${tok}.rsc" dst-path=mc.rsc; :delay 2s; /import mc.rsc; /file remove mc.rsc`;
+const rtStatus = (lastOk) => {
+  if (!lastOk) return { st: 'none', ago: null };
+  const m = Math.max(0, (Date.now() - new Date(String(lastOk).replace(' ', 'T') + 'Z').getTime()) / 60000);
+  return { st: m <= 3 ? 'online' : m <= 10 ? 'unstable' : 'offline', ago: Math.floor(m) };
+};
 
 function init(h, P, shared) {
   const { app, q, q1, run, audit, ctx, go, needAdmin, nav, deny } = h;
@@ -134,6 +143,16 @@ function init(h, P, shared) {
     if (!d) { res.status(404).type('text').send('router not enrolled yet'); return null; }
     return { co, d, kv, rs };
   }
+  app.get('/api/router/ping', (req, res) => { res.set('Cache-Control', 'no-store'); res.type('text').send('ok'); });
+  // installer: the router downloads this file with its private key in the path; nothing is created or changed here
+  app.get('/r/:f', (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    if (tooMany('ip:' + req.ip, 60)) return res.status(429).type('text').send('slow down');
+    const m = /^(mc_[0-9a-f]{48})\.rsc$/.exec(String(req.params.f || ''));
+    const co = m ? q1('SELECT * FROM companies WHERE enroll_hash=?', sha(m[1])) : null;
+    if (!co || ['suspended', 'expired', 'cancelled'].includes(co.status) || !P.hasModule(co, 'network')) { tooMany('bad:' + req.ip, 20); return res.status(404).type('text').send('not found'); }
+    res.type('text').send(fullScript(publicBase(req), m[1]));
+  });
   // ---- router pushes a list (chunked). final=1 on the last chunk removes rows not seen in this batch.
   app.post('/api/router/sync', (req, res) => {
     const a = auth(req, res); if (!a) return;
@@ -170,7 +189,8 @@ function init(h, P, shared) {
       run("UPDATE router_cmds SET status='sent', sent_at=datetime('now') WHERE id=?", c.id);
       out.push(`${c.id}|${c.action}|${c.target}|${c.arg || ''}`);
     }
-    res.type('text').send(out.join(';'));
+    run("UPDATE devices SET last_ok=datetime('now'), last_check=datetime('now'), fails=0 WHERE id=?", a.d.id);
+    res.type('text').send(out.join(','));
   });
   app.post('/api/router/ack', (req, res) => {
     const a = auth(req, res); if (!a) return;
@@ -226,4 +246,4 @@ ${rows.map((r) => { const on = act[kind] && act[kind].has(`${r.device_id}:${r.na
     res.send(wrap(req, 'Router Commands', `<div class="card"><h3>${t('Router Commands')}</h3><p class="mut">${t('Only these actions can ever run on a router, and only on names the router itself reported. The router pulls them every minute.')}</p></div><div class="card tbl"><table><tr><th>#</th><th>${t('Time')}</th><th>${t('Router')}</th><th>${t('Action')}</th><th>${t('Name')}</th><th>${t('Status')}</th><th>${t('By')}</th></tr>${rows.map((r) => `<tr><td>${r.id}</td><td>${esc(r.created_at)}</td><td>${esc(r.router)}</td><td>${t(ACTION_LABEL[r.action] || r.action)}${r.arg ? ' → ' + esc(r.arg) : ''}</td><td>${esc(r.target)}</td><td>${esc(r.status)} ${esc(r.result)}</td><td>${esc(r.created_by)}</td></tr>`).join('') || `<tr><td colspan="7" class="mut">-</td></tr>`}</table></div>`));
   });
 }
-module.exports = { init, fullScript, KINDS, ACTIONS, NAME };
+module.exports = { init, fullScript, installLine, rtStatus, publicBase, KINDS, ACTIONS, NAME };
