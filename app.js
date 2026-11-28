@@ -11,6 +11,7 @@ const { init: devicesInit, PAGES: DEV_PAGES, mkBadge, mkFirst } = require('./dev
 const { init: paymentsInit } = require('./payments');
 const { init: financeInit } = require('./finance');
 const { init: vouchersInit } = require('./vouchers');
+const { init: cardsInit } = require('./cards');
 const { init: reportsInit } = require('./reports');
 const makePortal = require('./portal');
 const makeBackup = require('./autobackup');
@@ -169,6 +170,7 @@ function createApp(db, opts = {}) {
   paymentsInit({ app, db, q, q1, run, audit, ctx, go, deny, needSuper, needAdmin, nav: (req) => nav(req) });
   const FIN = financeInit({ app, db, q, q1, run, audit, ctx, go, deny, needAdmin, nav: (req) => nav(req) });
   vouchersInit({ app, db, q, q1, run, audit, ctx, go, deny, needAdmin, nav: (req) => nav(req), P });
+  const CARDS = cardsInit({ app, db, q, q1, run, audit, ctx, go, deny, needAdmin, nav: (req) => nav(req), P });
   const S = secureInit(q1, run); S.setQ(q); try { S.migrate(); } catch (e) { console.error('secure migrate', e.message); }
   TF.init({ requireSuper2fa, S, app, q1, run, audit, ctx, go, needLogin, verifyPassword, nav: (req) => nav(req) });
   const RPT = reportsInit({ app, q, q1, ctx, needAdmin, deny, nav: (req) => nav(req), P });
@@ -343,7 +345,7 @@ ${field(t('Current password'), 'current', '', { type: 'password', req: true })}$
     const co0 = u.company_id ? q1('SELECT plan FROM companies WHERE id=?', u.company_id) : null, hm = (m) => !co0 || P.hasModule(co0, m);
     let h = `<a href="/app">${t('Dashboard')}</a>`;
     if (can(u, 'customers.view')) h += can(u, 'customers.add') ? grp('Customers', [['Customers', '/app/customers'], ['Add', '/app/customers/new']]) : `<a href="/app/customers">${t('Customers')}</a>`;
-    if (u.role === 'company_admin') h += `<a href="/app/packages">${t('Packages')}</a>` + (hm('vouchers') ? grp('Vouchers', [['Voucher batches', '/app/vouchers'], ['Card templates', '/app/vouchers/templates']]) : '') + (hm('reports') ? `<a href="/app/reports">${t('Reports')}</a>` : '') + `<a href="/app/notifications">${t('Notifications')}</a><a href="/app/finance">${t('Finance')}</a>` + (hm('network') ? grp('Network Management', DEV_PAGES.map(([k, l, u2]) => [l, u2])) : '') + grp('My Subscription', [['My Subscription', '/app/subscription'], ['My payments', '/app/payments']]);
+    if (u.role === 'company_admin') h += `<a href="/app/packages">${t('Packages')}</a>` + (hm('vouchers') ? grp('Cards', [['Cards overview', '/app/cards'], ['All cards', '/app/cards/list'], ['Expired cards', '/app/cards/expired'], ['Sales reports', '/app/cards/sales'], ['Distributors', '/app/cards/distributors'], ['Create cards', '/app/vouchers'], ['Card templates', '/app/vouchers/templates']]) : '') + (hm('reports') ? `<a href="/app/reports">${t('Reports')}</a>` : '') + `<a href="/app/notifications">${t('Notifications')}</a><a href="/app/finance">${t('Finance')}</a>` + (hm('network') ? grp('Network Management', DEV_PAGES.map(([k, l, u2]) => [l, u2])) : '') + grp('My Subscription', [['My Subscription', '/app/subscription'], ['My payments', '/app/payments']]);
     if (can(u, 'audit.view')) h += `<a href="/app/audit">${t('Audit log')}</a>`;
     return h;
   }
@@ -613,7 +615,7 @@ ${P.adminSubscriptionCard(req, c, co)}
     for (const tb of ['customers', 'invoices', 'payments', 'plan_requests', 'devices', 'device_groups', 'device_alerts']) snap[tb] = q(`SELECT * FROM ${tb} WHERE company_id=?`, co.id);
     try {
       run('INSERT INTO deleted_companies(company_id,name,deleted_by,snapshot) VALUES(?,?,?,?)', co.id, co.name, req.user.username, JSON.stringify(snap));
-      for (const tb of ['vouchers', 'voucher_batches', 'voucher_templates', 'cust_payments', 'cust_invoices', 'expenses', 'packages', 'payments', 'router_cmds', 'router_items', 'device_alerts', 'device_groups', 'devices', 'plan_requests', 'invoices', 'customers']) run(`DELETE FROM ${tb} WHERE company_id=?`, co.id);
+      for (const tb of ['vouchers', 'voucher_batches', 'distributors', 'voucher_templates', 'cust_payments', 'cust_invoices', 'expenses', 'packages', 'payments', 'router_cmds', 'router_items', 'device_alerts', 'device_groups', 'devices', 'plan_requests', 'invoices', 'customers']) run(`DELETE FROM ${tb} WHERE company_id=?`, co.id);
       run('DELETE FROM sessions WHERE user_id IN (SELECT id FROM users WHERE company_id=?)', co.id);
       run('DELETE FROM tenant_domains WHERE company_id=?', co.id);
       run('DELETE FROM view_sessions WHERE company_id=?', co.id);
@@ -671,13 +673,15 @@ ${P.adminSubscriptionCard(req, c, co)}
 
   // =============== COMPANY AREA (tenant scoped: company_id ALWAYS from session) ===============
   const u_isAdmin = (req) => req.user.role === 'company_admin';
+  const hasMod = (co, m) => P.hasModule(co, m);
+  const cardsWidget = (req, co, s) => { const t = req.i.t, st = (v, l, col) => `<div class="stat" style="border-top:4px solid ${col}"><b>${v}</b><span>${t(l)}</span></div>`; return `<div class="card" style="margin-top:16px"><div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><h3>${t('Cards')}</h3><a class="btn sec" href="/app/cards">${t('Cards overview')}</a></div><div class="grid">${st(s.active, 'Active cards', '#16a34a')}${st(s.soldCount, 'Sold cards', '#2563eb')}${st(s.expired, 'Expired', '#dc2626')}${st(Math.round(s.soldValue * 100) / 100 + ' ' + esc(co.currency || ''), 'Sales value', '#16a34a')}</div></div>`; };
   app.get('/app', needCompany, (req, res) => {
     const t = req.i.t, c = ctx(req), cid = req.user.company_id;
     const co = q1('SELECT * FROM companies WHERE id=?', cid);
     const n = (sql, ...a) => q1(sql, cid, ...a).n;
     const stat = (v, l) => `<div class="stat"><b>${v}</b><span>${t(l)}</span></div>`;
     res.send(page(c, 'Dashboard', `<h3>${t('Welcome')}, ${esc(req.user.name)} - ${esc(co.name)} ${badge(statusOf(co), t)}</h3><div class="grid">
-${stat(n('SELECT count(*) n FROM customers WHERE company_id=?'), 'Total customers')}${stat(n("SELECT count(*) n FROM customers WHERE company_id=? AND status='active'"), 'Active')}${stat(n("SELECT count(*) n FROM customers WHERE company_id=? AND payment_status='unpaid'"), 'Unpaid')}${stat(n("SELECT count(*) n FROM users WHERE company_id=? AND role='employee'"), 'Employees')}</div>${u_isAdmin(req) ? RPT.dashboard(req) : ''}`, nav(req)));
+${stat(n('SELECT count(*) n FROM customers WHERE company_id=?'), 'Total customers')}${stat(n("SELECT count(*) n FROM customers WHERE company_id=? AND status='active'"), 'Active')}${stat(n("SELECT count(*) n FROM customers WHERE company_id=? AND payment_status='unpaid'"), 'Unpaid')}${stat(n("SELECT count(*) n FROM users WHERE company_id=? AND role='employee'"), 'Employees')}</div>${u_isAdmin(req) && hasMod(co, 'vouchers') ? cardsWidget(req, co, CARDS.summary(cid)) : ''}${u_isAdmin(req) ? RPT.dashboard(req) : ''}`, nav(req)));
   });
   const custFields = (t, v = {}) => `<div class="row">${field(t('Full name'), 'full_name', v.full_name, { req: true })}${field(t('Phone'), 'phone', v.phone)}${field(t('WhatsApp'), 'whatsapp', v.whatsapp)}${field(t('Email'), 'email', v.email, { type: 'email' })}${field(t('Address'), 'address', v.address)}${field(t('Location'), 'location', v.location)}
 ${select(t('Account type'), 'account_type', v.account_type, [['individual', 'Individual'], ['business', 'Business']])}${select(t('Service type'), 'service_type', v.service_type, [['pppoe', 'PPPoE'], ['hotspot', 'Hotspot'], ['static', 'Static']])}${field(t('Package'), 'package', v.package)}${field(t('Username'), 'username', v.username)}

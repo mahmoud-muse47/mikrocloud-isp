@@ -26,6 +26,7 @@ const ar = {
   'customers.view':'عرض المشتركين','customers.add':'إضافة مشتركين','customers.edit':'تعديل مشتركين','customers.delete':'حذف مشتركين','audit.view':'عرض سجل النشاط','customers.export':'تصدير المشتركين'
 };
 Object.assign(ar, require('./i18n_plans'), require('./i18n_devices'), require('./i18n_pay'), require('./i18n_rep'), require('./i18n_sec'), require('./i18n_admin'));
+for (const [k, v] of Object.entries(require('./i18n_cards'))) if (!(k in ar)) ar[k] = v;
 function make(lang) {
   const rtl = lang === 'ar';
   return { lang, rtl, t: (k) => (rtl && ar[k]) || (rtl ? k : String(k).replace(/Companies/g, 'Clients').replace(/Company/g, 'Client').replace(/companies/g, 'clients').replace(/company/g, 'client')) };
