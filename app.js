@@ -390,7 +390,7 @@ ${sec('Additional Settings', `${select(t('Account Status'), 'status', 'auto', [[
 <script>(function(){var D=${data},$=function(i){return document.getElementById(i)};var ps=$('planPreview');
 function cur(){return D.plans.filter(function(p){return String(p.id)===$('plan_id').value})[0]}
 function fill(){var p=cur();if(!p)return;var per=$('period');var old=per.value;per.innerHTML='';p.periods.forEach(function(x){var o=document.createElement('option');o.value=x.code;o.textContent=D.lbl[x.code]||x.code;per.appendChild(o)});if(old&&p.periods.some(function(x){return x.code===old}))per.value=old;
-['max_admins','max_subscribers','max_routers','max_aps'].forEach(function(k){var v=p.limits[k];$('lim_'+k).value=v<0?'':v;$('unl_'+k).checked=v<0});upd()}
+['max_admins','max_subscribers','max_routers','max_aps'].forEach(function(k){var v=p.limits[k];if(k=='max_routers'){v=1}$('lim_'+k).value=v<0?'':v;$('unl_'+k).checked=v<0});upd()}
 function upd(){var p=cur();if(!p)return;var x=p.periods.filter(function(q){return q.code===$('period').value})[0];if(!x)return;
 $('priceShow').value=x.price+' '+p.cur+' / '+(D.lbl[x.code]||x.code);$('trialShow').value=x.code==='trial'?p.trial_days+' '+D.lbl.days:'-';
 var s=new Date($('sub_start').value||new Date());if(!isNaN(s)){s.setDate(s.getDate()+(x.days||30));$('sub_end').value=s.toISOString().slice(0,10)}
@@ -423,6 +423,8 @@ $('plan_id').onchange=fill;$('period').onchange=upd;$('sub_start').onchange=upd;
     const days = P.periodDays(plan, period) || 30;
     const end = b.sub_end ? clean(b.sub_end, 10) : P.addDays(start, days);
     if (!P.validDate(start) || !P.validDate(end) || end < start) return bad('Invalid dates');
+    // new clients start with ONE router unless the super admin sets another number or Unlimited
+    if (!b.unl_max_routers && String(b.lim_max_routers ?? '').trim() === '') b.lim_max_routers = '1';
     const { over } = P.limitsFromForm(b, plan);
     const isTrial = period === 'trial';
     const status = ['active', 'trial', 'suspended'].includes(b.status) ? b.status : (isTrial ? 'trial' : 'active');
