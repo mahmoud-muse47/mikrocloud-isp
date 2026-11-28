@@ -3,7 +3,8 @@ const setBrand = (b) => { BRAND = b || 'MikroCloud'; };
 const getBrand = () => BRAND;
 const hostOnly = (s) => String(s || '').toLowerCase().trim().replace(/^https?:\/\//, '').replace(/[/:?#].*$/, '');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const css = `
+const AD = require('./adminui');
+const css0 = `
 :root{--p:#2563eb;--bg:#f1f5f9;--card:#fff;--tx:#0f172a;--mut:#64748b;--bd:#e2e8f0;--ok:#16a34a;--bad:#dc2626;--warn:#d97706}
 *{box-sizing:border-box}body{margin:0;font-family:system-ui,"Segoe UI",Tahoma,Arial,sans-serif;background:var(--bg);color:var(--tx)}
 a{color:var(--p);text-decoration:none}header{background:#0f172a;color:#fff;display:flex;align-items:center;gap:16px;padding:10px 20px;flex-wrap:wrap}
@@ -39,6 +40,7 @@ form.loading .spin{display:inline-block}@keyframes s{to{transform:rotate(360deg)
 .vb{background:#b91c1c;color:#fff;text-align:center;padding:8px 12px;font-weight:600;position:sticky;top:0;z-index:50;display:flex;gap:14px;justify-content:center;align-items:center}.vb button{padding:4px 14px}
 .mo{position:fixed;inset:0;background:rgba(15,23,42,.55);display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px}.mb{background:#fff;border-radius:14px;border:2px solid #dc2626;max-width:440px;width:100%;padding:26px 24px;text-align:center;box-shadow:0 20px 50px rgba(0,0,0,.35);font-size:17px;line-height:1.6;color:#b91c1c;font-weight:600}.mb .bt{margin-top:18px;display:flex;gap:10px;justify-content:center}.mb button{min-width:100px;font-size:16px;background:#dc2626;color:#fff;border:0;border-radius:9px;padding:9px 18px;cursor:pointer}.mb button.sec{background:#e2e8f0;color:#334155}.mb.ok{border-color:#16a34a;color:#166534}.mb.ok button{background:#16a34a}.mb.warn{border-color:#d97706;color:#b45309}.mb.warn button{background:#d97706}
 @media(max-width:800px){.shell{grid-template-columns:1fr}.side{grid-column:1;grid-row:1;position:static}.shell main{grid-row:2;grid-column:1}}`;
+const css = css0 + AD.css;
 const js = `document.addEventListener('submit',e=>{e.target.classList&&e.target.classList.add('loading')});
 (function(){var s=document.getElementById('side');if(!s)return;var p=location.pathname,best=null;s.querySelectorAll('a').forEach(function(a){var h=a.getAttribute('href');if((p===h||(h.length>5&&p.indexOf(h)===0))&&(!best||h.length>=best.getAttribute('href').length))best=a});if(best)best.className='on'})();
 
@@ -60,8 +62,8 @@ function page(ctx, title, body, nav = '') {
   const side = !!(user && nav);
   const other = i.lang === 'ar' ? 'en' : 'ar';
   return `<!doctype html><html lang="${i.lang}" dir="${i.rtl ? 'rtl' : 'ltr'}"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)} - ${esc(BRAND)}</title><style>${css}</style></head><body class="${user && user.role !== 'super_admin' ? 'cl' : ''}">
-${viewAs ? `<div class="vb"><span>${esc(t('View only'))}: ${esc(viewAs.name)}</span><form id="vx" method="post" action="/view-as/exit" style="display:inline"><input type="hidden" name="_csrf" value="${esc(csrf)}"><button class="sec">${esc(t('Exit view'))}</button></form></div>` : ''}<header><span class="brand">${esc(BRAND)}</span>${side ? '' : nav}<span class="sp"></span>
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)} - ${esc(BRAND)}</title><style>${css}</style></head><body class="${user && user.role !== 'super_admin' ? 'cl' : user ? 'ad' : ''}">
+${viewAs ? `<div class="vb"><span>${esc(t('View only'))}: ${esc(viewAs.name)}</span><form id="vx" method="post" action="/view-as/exit" style="display:inline"><input type="hidden" name="_csrf" value="${esc(csrf)}"><button class="sec">${esc(t('Exit view'))}</button></form></div>` : ''}<header>${user && user.role === 'super_admin' && side ? `<button type="button" class="menubtn sec" aria-label="Menu" onclick="document.body.classList.toggle('nav-open')">${AD.ico('menu', 22)}</button>` : ''}<span class="brand">${esc(BRAND)}</span>${side ? '' : nav}<span class="sp"></span>
 <a href="/lang/${other}?back=${encodeURIComponent(path || '/')}">${other === 'ar' ? 'العربية' : 'English'}</a>
 ${user ? `<a href="/account">${esc(user.name)}</a><form class="inline" method="post" action="/logout"><input type="hidden" name="_csrf" value="${esc(csrf)}"><button class="sec">${t('Logout')}</button></form>` : ''}</header>
 ${side ? `<div class="shell" style="--dir:${i.rtl ? 'rtl' : 'ltr'}">` : ''}<main>${body}</main>${side ? `<aside class="side" id="side">${nav}</aside></div>` : ''}<script>${js}</script>${viewAs ? `<script>document.querySelectorAll('form:not(#vx) button,form:not(#vx) input[type=submit]').forEach(function(b){b.disabled=true;b.title='View only'})</script>` : ''}${flash ? `<script>mcModal(${JSON.stringify(String(flash.msg)).replace(/</g, '\\u003c')},null,${JSON.stringify(flash.type === 'err' ? '' : flash.type === 'warn' ? 'warn' : 'ok')})</script>` : ''}</body></html>`;

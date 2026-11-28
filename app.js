@@ -3,6 +3,7 @@ const crypto = require('node:crypto');
 const { hashPassword, verifyPassword, passwordProblem, sha } = require('./db');
 const { make } = require('./i18n');
 const V = require('./views');
+const AD = require('./adminui');
 const { init: plansInit } = require('./plans');
 const { init: devicesInit, PAGES: DEV_PAGES, mkBadge, mkFirst } = require('./devices');
 const { init: paymentsInit } = require('./payments');
@@ -321,7 +322,14 @@ ${field(t('Current password'), 'current', '', { type: 'password', req: true })}$
   function nav(req) {
     const t = req.i.t, u = req.user;
     if (!u) return '';
-    if (u.role === 'super_admin') return `<a href="/admin">${t('Dashboard')}</a><a href="/admin/companies">${t('Companies')}</a><a href="/admin/plans">${t('Subscription Plans & Pricing')}</a><a href="/admin/payment-methods">${t('Payment Methods')}</a><a href="/admin/payments">${t('Payments')}</a><a href="/admin/audit">${t('Audit log')}</a><a href="/admin/security">${t('Security')}</a><a href="/admin/backups">${t('Backups')}</a><a href="/admin/system">${t('System')}</a>`;
+    if (u.role === 'super_admin') {
+      const P1 = req.path || '', ic = AD.ico;
+      const lk = (h, l, i2) => `<a href="${h}">${ic(i2)}<span>${t(l)}</span></a>`;
+      const gp = (l, i2, items) => `<details class="grp"${items.some(([h]) => P1 === h || P1.startsWith(h + '/')) ? ' open' : ''}><summary>${ic(i2)}<span>${t(l)}</span></summary>${items.map(([h, l2]) => `<a href="${h}">${t(l2)}</a>`).join('')}</details>`;
+      return lk('/admin', 'Dashboard', 'grid') + lk('/admin/companies', 'Companies', 'users')
+        + gp('Billing', 'cash', [['/admin/plans', 'Subscription Plans & Pricing'], ['/admin/payment-methods', 'Payment Methods'], ['/admin/payments', 'Payments']])
+        + gp('Security & System', 'shield', [['/admin/audit', 'Audit log'], ['/admin/security', 'Security'], ['/admin/backups', 'Backups'], ['/admin/system', 'System']]);
+    }
     const P0 = req.path || '';
     const grp = (label, items) => `<details class="grp"${items.some(([, u]) => P0 === u || (u.length > 5 && P0.startsWith(u + '/')) || P0 === u) ? ' open' : ''}><summary>${t(label)}</summary>${items.map(([l, u]) => `<a href="${u}">${t(l)}</a>`).join('')}</details>`;
     const co0 = u.company_id ? q1('SELECT plan FROM companies WHERE id=?', u.company_id) : null, hm = (m) => !co0 || P.hasModule(co0, m);
@@ -339,34 +347,80 @@ ${field(t('Current password'), 'current', '', { type: 'password', req: true })}$
     if (end && end < new Date().toISOString().slice(0, 10)) return 'expired';
     return c.status;
   };
+  const MONTHS_AR = ['يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو', 'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'];
+  const MONTHS_EN = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const monthKeys = (n) => { const o = [], d = new Date(); d.setUTCDate(1); for (let k = n - 1; k >= 0; k--) { const x = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - k, 1)); o.push(`${x.getUTCFullYear()}-${String(x.getUTCMonth() + 1).padStart(2, '0')}`); } return o; };
+  const monthLbl = (k, i) => (i.rtl ? MONTHS_AR : MONTHS_EN)[Number(k.slice(5)) - 1];
+  const nf = (n) => Number(n).toLocaleString('en-US', { maximumFractionDigits: 2 });
   app.get('/admin', needSuper, (req, res) => {
-    const t = req.i.t, c = ctx(req);
+    const t = req.i.t, c = ctx(req), ic = AD.ico;
     const comps = q('SELECT * FROM companies');
-    const cnt = (s) => comps.filter((x) => statusOf(x) === s).length;
+    const cnt = (s2) => comps.filter((x) => statusOf(x) === s2).length;
     const customers = q1('SELECT count(*) n FROM customers').n;
-    const recent = q('SELECT a.*, c.name cname FROM audit_log a LEFT JOIN companies c ON c.id=a.company_id ORDER BY a.id DESC LIMIT 10');
-    const stat = (n, l) => `<div class="stat"><b>${n}</b><span>${t(l)}</span></div>`;
+    const recent = q('SELECT a.*, c.name cname, u.username FROM audit_log a LEFT JOIN companies c ON c.id=a.company_id LEFT JOIN users u ON u.id=a.user_id ORDER BY a.id DESC LIMIT 8');
     const rr = q("SELECT r.id, u.id uid, u.username, c.id cid, c.name cname FROM reset_requests r JOIN users u ON u.id=r.user_id JOIN companies c ON c.id=u.company_id WHERE r.status='open' AND u.role='company_admin' ORDER BY r.id");
     const rrCard = rr.length ? `<div class="card tbl"><h3>${t('Password reset requests')}</h3><table>${rr.map((r) => `<tr><td>${esc(r.cname)}</td><td>${esc(r.username)}</td><td><form class="inline" method="post" action="/admin/companies/${r.cid}/reset/${r.uid}">${csrfField(c)}<button>${t('Issue reset link')}</button></form></td></tr>`).join('')}</table></div>` : '';
-    res.send(page(c, 'Dashboard', `${rrCard}<div class="grid">${stat(comps.length, 'Total companies')}${stat(cnt('active'), 'Active companies')}${stat(cnt('trial'), 'Trial companies')}${stat(cnt('suspended'), 'Suspended companies')}${stat(cnt('expired'), 'Expired subscriptions')}${stat(customers, 'Total customers')}</div>
-<div class="card" style="margin-top:16px"><h3>${t('Recent activity')}</h3><div class="tbl"><table>${recent.map((a) => `<tr><td>${esc(a.ts)}</td><td>${esc(a.cname || '-')}</td><td>${esc(a.action)}</td><td>${esc(a.detail)}</td></tr>`).join('') || `<tr><td>${t('No results')}</td></tr>`}</table></div></div>`, nav(req)));
+    const pend = q1("SELECT count(*) n, COALESCE(sum(amount),0) s, max(currency) cur FROM payments WHERE status='pending'");
+    const mk = monthKeys(6)[5];
+    const mrev = q("SELECT currency cur, COALESCE(sum(amount),0) s FROM payments WHERE status='approved' AND substr(decided_at,1,7)=? GROUP BY currency ORDER BY s DESC", mk);
+    const mrevTxt = mrev.length ? mrev.map((x) => `${nf(x.s)} ${esc(x.cur)}`).join(' + ') : '0';
+    const kpi = (href, icon, cls, n, label, sub) => `<a class="kpi ${cls}" href="${href}"><span class="ki">${ic(icon, 20)}</span><span><b>${n}</b><small>${t(label)}</small>${sub ? `<em>${sub}</em>` : ''}</span></a>`;
+    const m = [3, 6, 12].includes(Number(req.query.m)) ? Number(req.query.m) : 6, keys = monthKeys(m);
+    const rv = q("SELECT substr(decided_at,1,7) k, currency cur, sum(amount) s FROM payments WHERE status='approved' AND decided_at IS NOT NULL GROUP BY 1,2");
+    const totalBy = {}; rv.forEach((x) => { if (keys.includes(x.k)) totalBy[x.cur] = (totalBy[x.cur] || 0) + x.s; });
+    const mainCur = Object.keys(totalBy).sort((a2, b2) => totalBy[b2] - totalBy[a2])[0];
+    const revRows = keys.map((k) => [monthLbl(k, req.i), mainCur ? (rv.find((x) => x.k === k && x.cur === mainCur) || { s: 0 }).s : 0]);
+    const growth = keys.map((k) => [monthLbl(k, req.i), comps.filter((x) => String(x.created_at).slice(0, 7) === k).length]);
+    const byPlan = {}; comps.forEach((x) => { byPlan[x.plan] = (byPlan[x.plan] || 0) + 1; });
+    const planRows = Object.entries(byPlan).sort((a2, b2) => b2[1] - a2[1]).map(([code, n]) => [esc(P.planName(P.getPlan(code), req.i)), n]);
+    const mx = Math.max(1, ...planRows.map((r) => r[1]));
+    const rng = `<div class="ft">${[3, 6, 12].map((n) => `<a class="chip${n === m ? ' on' : ''}" href="/admin?m=${n}">${n} ${t('months')}</a>`).join('')}</div>`;
+    const quick = `<div class="qa"><a href="/admin/companies/new">${ic('plus', 15)} ${t('New company')}</a><a href="/admin/plans/new">${ic('tag', 15)} ${t('New plan')}</a><a href="/admin/payment-methods/new">${ic('card', 15)} ${t('Add payment method')}</a><a href="/admin/payments?status=pending">${ic('clock', 15)} ${t('Pending payments')}</a><a href="/admin/security">${ic('shield', 15)} ${t('Security')}</a></div>`;
+    res.send(page(c, 'Dashboard', `<div class="ph"><div><h1 class="pt">${t('Dashboard')}</h1></div>${quick}</div>${rrCard}
+<div class="kpis">${kpi('/admin/companies', 'users', '', comps.length, 'Total companies')}${kpi('/admin/companies?status=active', 'check', 'g', cnt('active'), 'Active companies')}${kpi('/admin/companies?status=trial', 'clock', '', cnt('trial'), 'Trial companies')}${kpi('/admin/companies?status=suspended', 'pause', 'b', cnt('suspended'), 'Suspended companies')}
+${kpi('/admin/companies?status=expired', 'alert', 'w', cnt('expired'), 'Expired subscriptions')}${kpi('/admin/companies', 'wifi', '', customers, 'Total customers')}${kpi('/admin/payments?status=approved', 'cash', 'g', mrevTxt, 'Revenue this month')}${kpi('/admin/payments?status=pending', 'card', 'w', pend.n, 'Pending payments', pend.n ? `${nf(pend.s)} ${esc(pend.cur || '')}` : '')}</div>
+<div class="two"><div class="card"><div class="ph" style="margin:0"><h3>${t('Revenue')}${mainCur ? ' (' + esc(mainCur) + ')' : ''}</h3>${rng}</div>${revRows.some((r) => r[1] > 0) ? AD.bars(revRows, nf) : `<div class="empty">${t('No approved payments in this period')}</div>`}</div>
+<div class="card"><h3>${t('Plan distribution')}</h3><div class="dist">${planRows.map(([n, v]) => `<div class="r"><span>${n}</span><span class="t"><i style="width:${Math.round((v / mx) * 100)}%"></i></span><b>${v}</b></div>`).join('') || `<div class="empty">${t('No results')}</div>`}</div></div></div>
+<div class="two"><div class="card tbl"><div class="ph" style="margin:0;padding:14px 18px 0"><h3 style="margin:0">${t('Recent activity')}</h3><a href="/admin/audit">${t('View all')}</a></div><table><tr><th>${t('Time')}</th><th>${t('User')}</th><th>${t('Action')}</th><th>${t('Company')}</th><th>${t('Detail')}</th></tr>${recent.map((a2) => `<tr><td>${esc(a2.ts)}</td><td>${esc(a2.username || '-')}</td><td>${esc(AD.actionLabel(a2.action, t))}</td><td>${esc(a2.cname || '-')}</td><td>${esc(a2.detail)}</td></tr>`).join('') || `<tr><td colspan="5" class="empty">${t('No results')}</td></tr>`}</table></div>
+<div class="card"><h3>${t('New clients per month')}</h3>${growth.some((r) => r[1] > 0) ? AD.bars(growth) : `<div class="empty">${t('No new clients in this period')}</div>`}</div></div>`, nav(req)));
   });
   const AB = makeBackup({ db, S, audit });
   if (!opts.noBackupTimer) AB.start();
   PT.init({ app, db, audit, ctx, go, needSuper, nav: (req) => nav(req), AB, requireSuper2fa });
   app.get('/admin/audit', needSuper, (req, res) => {
-    const rows = q('SELECT a.*, c.name cname, u.username FROM audit_log a LEFT JOIN companies c ON c.id=a.company_id LEFT JOIN users u ON u.id=a.user_id ORDER BY a.id DESC LIMIT 200');
-    res.send(page(ctx(req), 'Audit', `<div class="card tbl" data-autorefresh="1"><table><tr><th>Time</th><th>Company</th><th>User</th><th>Action</th><th>Detail</th><th>IP</th></tr>${rows.map((a) => `<tr><td>${esc(a.ts)}</td><td>${esc(a.cname || '-')}</td><td>${esc(a.username || '-')}</td><td>${esc(a.action)}</td><td>${esc(a.detail)}</td><td>${esc(a.ip)}</td></tr>`).join('')}</table></div>`, nav(req)));
+    const t = req.i.t, c = ctx(req);
+    const s2 = clean(req.query.q, 100), act = clean(req.query.action, 60), per = 50, pg = Math.max(1, Number(req.query.page) || 1);
+    const where = '(c.name LIKE ? OR u.username LIKE ? OR a.detail LIKE ? OR a.ip LIKE ?)' + (act ? ' AND a.action=?' : '');
+    const args = [`%${s2}%`, `%${s2}%`, `%${s2}%`, `%${s2}%`].concat(act ? [act] : []);
+    const total = q1(`SELECT count(*) n FROM audit_log a LEFT JOIN companies c ON c.id=a.company_id LEFT JOIN users u ON u.id=a.user_id WHERE ${where}`, ...args).n;
+    const rows = q(`SELECT a.*, c.name cname, u.username FROM audit_log a LEFT JOIN companies c ON c.id=a.company_id LEFT JOIN users u ON u.id=a.user_id WHERE ${where} ORDER BY a.id DESC LIMIT ${per} OFFSET ${(pg - 1) * per}`, ...args);
+    const acts = q('SELECT DISTINCT action FROM audit_log ORDER BY action').map((x) => [x.action, AD.actionLabel(x.action, t)]);
+    const base = `/admin/audit?q=${encodeURIComponent(s2)}&action=${encodeURIComponent(act)}`;
+    res.send(page(c, 'Audit', `<div class="ph"><div><h1 class="pt">${t('Audit log')}</h1><p>${total} ${t('records')}</p></div></div>
+<form method="get" class="tool"><input class="grow" name="q" value="${esc(s2)}" placeholder="${t('Search')}"><select name="action">${[['', t('All')]].concat(acts).map(([v, l]) => `<option value="${esc(v)}"${v === act ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select><button>${t('Search')}</button></form>
+<div class="card tbl" data-autorefresh="1"><table><tr><th>${t('Time')}</th><th>${t('Company')}</th><th>${t('User')}</th><th>${t('Action')}</th><th>${t('Detail')}</th><th>IP</th></tr>${rows.map((a2) => `<tr><td>${esc(a2.ts)}</td><td>${esc(a2.cname || '-')}</td><td>${esc(a2.username || '-')}</td><td title="${esc(a2.action)}">${esc(AD.actionLabel(a2.action, t))}</td><td>${esc(a2.detail)}</td><td>${esc(a2.ip)}</td></tr>`).join('') || `<tr><td colspan="6" class="empty">${t('No results')}</td></tr>`}</table>${AD.pager(base, pg, Math.ceil(total / per), t)}</div>`, nav(req)));
   });
   app.get('/admin/companies', needSuper, (req, res) => {
     const t = req.i.t, c = ctx(req);
-    const s = clean(req.query.q, 100), st = clean(req.query.status, 20);
-    let rows = q('SELECT c.*, (SELECT count(*) FROM customers WHERE company_id=c.id) cust FROM companies c WHERE (c.name LIKE ? OR c.owner_name LIKE ? OR c.email LIKE ?) ORDER BY c.id DESC', `%${s}%`, `%${s}%`, `%${s}%`);
-    if (st) rows = rows.filter((r) => statusOf(r) === st);
-    res.send(page(c, 'Companies', `<div class="card"><form method="get" class="row"><div><input name="q" value="${esc(s)}" placeholder="${t('Search')}"></div>
-${select(t('Status'), 'status', st, [['', t('All')], ['active', t('Active')], ['trial', t('Trial')], ['suspended', t('Suspended')], ['expired', t('Expired')]])}<div style="padding-top:22px"><button>${t('Search')}</button> <a class="btn sec" href="/admin/companies/new">${t('New company')}</a></div></form></div>
-<div class="card tbl"><table><tr><th>#</th><th>${t('Company name')}</th><th>${t('Owner name')}</th><th>${t('Plan')}</th><th>${t('Status')}</th><th>${t('Customers')}</th><th></th></tr>
-${rows.map((r, ix) => `<tr><td>${ix + 1}</td><td>${esc(r.name)}</td><td>${esc(r.owner_name)}</td><td>${esc(P.planName(P.getPlan(r.plan), req.i))}</td><td>${badge(statusOf(r), t)}</td><td>${r.cust}</td><td><a href="/admin/companies/${r.id}">${t('View')}</a></td></tr>`).join('') || `<tr><td colspan="7">${t('No results')}</td></tr>`}</table></div>`, nav(req)));
+    const s2 = clean(req.query.q, 100), st = clean(req.query.status, 20), pl = clean(req.query.plan, 40), so = clean(req.query.sort, 10) || 'new', per = 20, pg = Math.max(1, Number(req.query.page) || 1);
+    const all = q('SELECT c.*, (SELECT count(*) FROM customers WHERE company_id=c.id) cust FROM companies c WHERE (c.name LIKE ? OR c.owner_name LIKE ? OR c.email LIKE ? OR c.network_name LIKE ?) ORDER BY c.id DESC', `%${s2}%`, `%${s2}%`, `%${s2}%`, `%${s2}%`);
+    const counts = {}; all.forEach((r) => { const k = statusOf(r); counts[k] = (counts[k] || 0) + 1; });
+    let rows = all.filter((r) => (!st || statusOf(r) === st) && (!pl || r.plan === pl));
+    const exp = (r) => r.subscription_ends || r.trial_ends || '9999';
+    if (so === 'name') rows.sort((a2, b2) => String(a2.name).localeCompare(String(b2.name)));
+    else if (so === 'expiry') rows.sort((a2, b2) => exp(a2).localeCompare(exp(b2)));
+    else if (so === 'subs') rows.sort((a2, b2) => b2.cust - a2.cust);
+    const total = rows.length, pages = Math.max(1, Math.ceil(total / per)), pgc = Math.min(pg, pages);
+    rows = rows.slice((pgc - 1) * per, pgc * per);
+    const plans = [...new Set(q('SELECT plan FROM companies').map((x) => x.plan))].map((code) => [code, P.planName(P.getPlan(code), req.i)]);
+    const qs = (o) => '/admin/companies?' + Object.entries({ q: s2, status: st, plan: pl, sort: so, ...o }).filter(([, v]) => v && v !== 'new').map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&');
+    const chip = (k, l, n) => `<a class="chip${st === k ? ' on' : ''}" href="${qs({ status: k, page: '' })}">${t(l)} <i>${n}</i></a>`;
+    res.send(page(c, 'Companies', `<div class="ph"><div><h1 class="pt">${t('Companies')}</h1><p>${total} ${t('records')}</p></div><a class="btn" href="/admin/companies/new">${AD.ico('plus', 15)} ${t('New company')}</a></div>
+<form method="get" class="tool"><input class="grow" name="q" value="${esc(s2)}" placeholder="${t('Search')}"><select name="plan"><option value="">${t('All plans')}</option>${plans.map(([v, l]) => `<option value="${esc(v)}"${v === pl ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>
+<select name="sort">${[['new', t('Newest')], ['name', t('Name')], ['expiry', t('Subscription Expiry')], ['subs', t('Managed Subscribers')]].map(([v, l]) => `<option value="${v}"${v === so ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>${st ? `<input type="hidden" name="status" value="${esc(st)}">` : ''}<button>${t('Search')}</button></form>
+<div class="ft" style="margin-bottom:12px">${chip('', 'All', all.length)}${chip('active', 'Active', counts.active || 0)}${chip('trial', 'Trial', counts.trial || 0)}${chip('expired', 'Expired', counts.expired || 0)}${chip('suspended', 'Suspended', counts.suspended || 0)}</div>
+<div class="card tbl"><table><tr><th>#</th><th>${t('Company name')}</th><th>${t('Network name')}</th><th>${t('Owner name')}</th><th>${t('Email')}</th><th>WhatsApp</th><th>${t('Plan')}</th><th>${t('Subscription Expiry')}</th><th>${t('Managed Subscribers')}</th><th>${t('Status')}</th><th></th></tr>
+${rows.map((r, ix) => `<tr><td>${(pgc - 1) * per + ix + 1}</td><td><a href="/admin/companies/${r.id}"><b>${esc(r.name)}</b></a></td><td>${esc(r.network_name) || '-'}</td><td>${esc(r.owner_name)}</td><td>${esc(r.email)}</td><td>${esc(r.whatsapp) || '-'}</td><td>${esc(P.planName(P.getPlan(r.plan), req.i))}</td><td>${esc(r.subscription_ends || r.trial_ends || '-')}</td><td>${r.cust}</td><td>${badge(statusOf(r), t)}</td><td style="white-space:nowrap"><a class="btn sec" href="/admin/companies/${r.id}">${t('View')}</a> <form class="inline" method="post" action="/admin/companies/${r.id}/view-as">${csrfField(c)}<button class="sec">${t('View as client')}</button></form></td></tr>`).join('') || `<tr><td colspan="11" class="empty">${t('No results')}</td></tr>`}</table>${AD.pager(qs({}), pgc, pages, t)}</div>`, nav(req)));
   });
   const companyForm = (c, t, co = {}) => `<div class="row">${field(t('Company name'), 'name', co.name, { req: true })}${field(t('Network name'), 'network_name', co.network_name)}${field(t('Owner name'), 'owner_name', co.owner_name)}
 ${field(t('Email'), 'email', co.email, { type: 'email' })}${field(t('Phone'), 'phone', co.phone)}${field(t('WhatsApp'), 'whatsapp', co.whatsapp)}${field(t('Country'), 'country', co.country || 'EG')}${field(t('City'), 'city', co.city)}${field(t('Address'), 'address', co.address)}</div>${field(t('Notes'), 'notes', co.notes, { ta: true })}`;

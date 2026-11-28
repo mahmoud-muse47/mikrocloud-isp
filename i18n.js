@@ -25,7 +25,7 @@ const ar = {
   'Employees limit':'حد الموظفين','Company Manager':'مدير العميل','Network Administrator':'مسؤول الشبكة','Technical Support':'دعم فني','Sales Employee':'مبيعات','Cashier':'كاشير','Read-only Employee':'مشاهدة فقط',
   'customers.view':'عرض المشتركين','customers.add':'إضافة مشتركين','customers.edit':'تعديل مشتركين','customers.delete':'حذف مشتركين','audit.view':'عرض سجل النشاط','customers.export':'تصدير المشتركين'
 };
-Object.assign(ar, require('./i18n_plans'), require('./i18n_devices'), require('./i18n_pay'), require('./i18n_rep'), require('./i18n_sec'));
+Object.assign(ar, require('./i18n_plans'), require('./i18n_devices'), require('./i18n_pay'), require('./i18n_rep'), require('./i18n_sec'), require('./i18n_admin'));
 function make(lang) {
   const rtl = lang === 'ar';
   return { lang, rtl, t: (k) => (rtl && ar[k]) || (rtl ? k : String(k).replace(/Companies/g, 'Clients').replace(/Company/g, 'Client').replace(/companies/g, 'clients').replace(/company/g, 'client')) };
