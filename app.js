@@ -81,6 +81,16 @@ function createApp(db, opts = {}) {
         } else run('DELETE FROM sessions WHERE token_hash=?', s.token_hash);
       } else if (s) run('DELETE FROM sessions WHERE token_hash=?', s.token_hash);
     }
+    // Read-only "view as client" for the super admin: needs the super admin's own valid session AND a matching view session.
+    req.viewAs = null;
+    if (cookies.vid && req.user && req.user.role === 'super_admin') {
+      const vs = q1('SELECT * FROM view_sessions WHERE token_hash=?', sha(cookies.vid));
+      if (vs && vs.super_user_id === req.user.id && vs.expires_at > Date.now()) {
+        const tgt = q1("SELECT * FROM users WHERE company_id=? AND role='company_admin' AND status='active' ORDER BY id LIMIT 1", vs.company_id);
+        const co = q1('SELECT id,name FROM companies WHERE id=?', vs.company_id);
+        if (tgt && co) { tgt.perms = null; req.viewAs = { company_id: co.id, name: co.name, super: req.user, tokenHash: vs.token_hash }; req.user = tgt; }
+      } else if (vs) run('DELETE FROM view_sessions WHERE token_hash=?', vs.token_hash);
+    }
     req.csrf = req.session ? req.session.csrf : (cookies.pre || '');
     if (!req.session && !cookies.pre) {
       req.csrf = crypto.randomBytes(16).toString('hex');
@@ -101,6 +111,16 @@ function createApp(db, opts = {}) {
     res.setHeader('Cache-Control', 'no-store');
     next();
   });
+  // In view mode nothing can change: no POST/PUT/DELETE at all (except leaving view mode), and only read pages under /app.
+  app.use((req, res, next) => {
+    if (!req.viewAs) return next();
+    const p = req.path, ro = (m) => res.status(403).send(page({ i: req.i, user: req.user, csrf: req.csrf, flash: null, path: req.originalUrl, viewAs: req.viewAs }, 'Read only', `<div class="card"><h3>${req.i.t('View only')}</h3><p>${req.i.t('You are viewing this client in read-only mode. Nothing can be changed.')}</p></div>`));
+    if (req.method === 'POST' && p === '/view-as/exit') return next();
+    if (req.method !== 'GET' && req.method !== 'HEAD') return ro();
+    if (p.startsWith('/lang/')) return next();
+    if (p === '/app/network/discovery' || p === '/app/network/connect' || !(p === '/app' || p.startsWith('/app/'))) return p.startsWith('/app') ? ro() : res.redirect(303, '/app');
+    next();
+  });
   app.use(PT.portalSession);
   app.use((req, res, next) => {
     if (req.method === 'POST' && req.path !== '/api/enroll' && !req.path.startsWith('/api/router/')) {
@@ -111,7 +131,7 @@ function createApp(db, opts = {}) {
     next();
   });
   for (const pn of ['id', 'iid', 'rid', 'uid']) app.param(pn, (req, res, next, v) => (/^\d{1,9}$/.test(v) ? next() : res.status(404).send('Not found')));
-  const ctx = (req) => ({ i: req.i, user: req.user, csrf: req.csrf, flash: req.flash, path: req.originalUrl });
+  const ctx = (req) => ({ i: req.i, user: req.user, csrf: req.csrf, flash: req.flash, path: req.originalUrl, viewAs: req.viewAs });
   const setFlash = (res, type, msg) => res.append('Set-Cookie', `flash=${encodeURIComponent(JSON.stringify({ type, msg }))}; Path=/; HttpOnly; SameSite=Lax; Max-Age=30`);
   const go = (res, url, type, msg) => { if (type) setFlash(res, type, msg); res.redirect(303, url); };
   const noModule = (req, res) => res.status(403).send(page(ctx(req), 'Error', `<div class="card"><h3>${req.i.t('Not included in your plan')}</h3><p>${req.i.t('This section is not part of your current plan. Open My Subscription to upgrade.')}</p><a class="btn" href="/app/subscription">${req.i.t('My Subscription')}</a></div>`));
@@ -217,7 +237,8 @@ function createApp(db, opts = {}) {
   app.post('/logout', needLogin, (req, res) => {
     audit(req, 'logout');
     run('DELETE FROM sessions WHERE token_hash=?', req.session.token_hash);
-    res.append('Set-Cookie', 'sid=; Max-Age=0; Path=/');
+    run('DELETE FROM view_sessions WHERE super_user_id=?', req.user.id);
+    res.append('Set-Cookie', 'sid=; Max-Age=0; Path=/'); res.append('Set-Cookie', 'vid=; Max-Age=0; Path=/');
     res.redirect(303, '/login');
   });
 
@@ -421,13 +442,32 @@ $('plan_id').onchange=fill;$('period').onchange=upd;$('sub_start').onchange=upd;
     go(res, `/admin/companies/${cid}`, 'ok', t('Created'));
   });
   const getCompany = (req, res) => { const c = q1('SELECT * FROM companies WHERE id=?', Number(req.params.id)); if (!c) { deny(req, res, 404); return null; } return c; };
+  app.post('/admin/companies/:id/view-as', needSuper, (req, res) => {
+    const co = getCompany(req, res); if (!co) return;
+    if (!q1("SELECT 1 x FROM users WHERE company_id=? AND role='company_admin' AND status='active'", co.id)) return go(res, `/admin/companies/${co.id}`, 'err', req.i.t('This client has no active admin to view'));
+    run('DELETE FROM view_sessions WHERE super_user_id=?', req.user.id);
+    const tok = crypto.randomBytes(32).toString('hex'), ttl = 30 * 60 * 1000;
+    run('INSERT INTO view_sessions(token_hash,super_user_id,company_id,created_at,expires_at) VALUES(?,?,?,?,?)', sha(tok), req.user.id, co.id, Date.now(), Date.now() + ttl);
+    // company_id NULL on purpose: this row is only ever read by the super admin screens, never by a client screen
+    audit(req, 'view_as_client', `company ${co.id} ${co.name}`, null);
+    res.append('Set-Cookie', `vid=${tok}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${Math.floor(ttl / 1000)}${opts.secureCookies ? '; Secure' : ''}`);
+    res.redirect(303, '/app');
+  });
+  app.post('/view-as/exit', needLogin, (req, res) => {
+    if (!req.viewAs) return res.redirect(303, '/');
+    run('DELETE FROM view_sessions WHERE token_hash=?', req.viewAs.tokenHash);
+    run('INSERT INTO audit_log(company_id,user_id,action,detail,ip) VALUES(?,?,?,?,?)', null, req.viewAs.super.id, 'view_as_client_end', `company ${req.viewAs.company_id} ${req.viewAs.name}`, req.ip);
+    res.append('Set-Cookie', 'vid=; Max-Age=0; Path=/');
+    res.redirect(303, `/admin/companies/${req.viewAs.company_id}`);
+  });
   app.get('/admin/companies/:id/activity', needSuper, (req, res) => {
     const co = getCompany(req, res); if (!co) return;
     const t = req.i.t, c = ctx(req);
     const per = 200, pg = Math.max(1, Number(req.query.page) || 1), kind = clean(req.query.kind, 20);
     const where = kind === 'login' ? " AND (a.action LIKE 'login%' OR a.action LIKE 'logout%' OR a.action LIKE 'password%')" : kind === 'router' ? " AND (a.action LIKE 'device_%' OR a.action LIKE 'router_%')" : kind === 'edit' ? " AND a.action NOT LIKE 'login%' AND a.action NOT LIKE 'logout%' AND a.action NOT LIKE 'device_%' AND a.action NOT LIKE 'router_%'" : '';
-    const total = q1(`SELECT count(*) n FROM audit_log a WHERE a.company_id=?${where}`, co.id).n;
-    const rows = q(`SELECT a.*, u.username FROM audit_log a LEFT JOIN users u ON u.id=a.user_id WHERE a.company_id=?${where} ORDER BY a.id DESC LIMIT ${per} OFFSET ${(pg - 1) * per}`, co.id);
+    const base = "(a.company_id=? OR (a.company_id IS NULL AND a.action LIKE 'view_as_client%' AND a.detail LIKE ?))", vp = `company ${co.id} %`;
+    const total = q1(`SELECT count(*) n FROM audit_log a WHERE ${base}${where}`, co.id, vp).n;
+    const rows = q(`SELECT a.*, u.username FROM audit_log a LEFT JOIN users u ON u.id=a.user_id WHERE ${base}${where} ORDER BY a.id DESC LIMIT ${per} OFFSET ${(pg - 1) * per}`, co.id, vp);
     const tabs = [['', 'All'], ['login', 'Logins'], ['edit', 'Edits'], ['router', 'Routers']].map(([k, l]) => `<a class="btn${kind === k ? '' : ' sec'}" href="/admin/companies/${co.id}/activity${k ? '?kind=' + k : ''}">${t(l)}</a>`).join(' ');
     const qs = (p) => `/admin/companies/${co.id}/activity?${kind ? 'kind=' + kind + '&' : ''}page=${p}`;
     res.send(page(c, co.name, `<div class="card"><div class="head"><h3>${esc(co.name)} - ${t('Activity log')}</h3><div class="acts"><a class="btn sec" href="/admin/companies/${co.id}">${t('Back')}</a></div></div><p>${tabs}</p></div>
@@ -442,7 +482,7 @@ $('plan_id').onchange=fill;$('period').onchange=upd;$('sub_start').onchange=upd;
     const acts = q('SELECT * FROM audit_log WHERE company_id=? ORDER BY id DESC LIMIT 15', co.id);
     const act = (path, label, cls = '') => `<form class="inline" method="post" action="/admin/companies/${co.id}/${path}">${csrfField(c)}<button class="${cls}">${label}</button></form>`;
     const link = req.flash && req.flash.link ? '' : '';
-    res.send(page(c, co.name, `<div class="card"><div class="head"><h3>${esc(co.name)} ${badge(statusOf(co), t)}</h3><div class="acts"><a class="btn sec" href="/admin/companies/${co.id}/activity">${t('Activity log')}</a> <a class="btn sec" href="/admin/companies/${co.id}/domains">${t('Custom domains')}</a> <a class="btn sec" href="/admin/companies/${co.id}/export">${t('Export')}</a></div></div>
+    res.send(page(c, co.name, `<div class="card"><div class="head"><h3>${esc(co.name)} ${badge(statusOf(co), t)}</h3><div class="acts"><a class="btn sec" href="/admin/companies/${co.id}/activity">${t('Activity log')}</a> ${act('view-as', t('View as client (read only)'), 'sec')} <a class="btn sec" href="/admin/companies/${co.id}/domains">${t('Custom domains')}</a> <a class="btn sec" href="/admin/companies/${co.id}/export">${t('Export')}</a></div></div>
 ${infoGrid([[t('Plan'), esc(P.planName(P.getPlan(co.plan), req.i))], [t('Status'), badge(statusOf(co), t)], [t('Trial ends'), esc(co.trial_ends || '-')], [t('Subscription ends'), esc(co.subscription_ends || '-')], [t('Registered'), esc(String(co.created_at).slice(0, 10))], [t('Customers'), cust], [t('Owner name'), esc(co.owner_name || '-')], [t('Email'), esc(co.email)]])}
 ${co.status === 'suspended' ? `<p class="flash err">${t('Suspended')}${co.suspended_until ? ` - ${t('Auto-reactivates on')} ${esc(co.suspended_until)}` : ` - ${t('Until reactivated manually')}`}</p><p>${act('status', t('Activate'), 'ok')}</p>` : `<form method="post" action="/admin/companies/${co.id}/status" class="row" style="border:1px solid var(--bd);border-radius:12px;padding:12px;margin:12px 0">${csrfField(c)}${field(t('Suspend until (leave empty for indefinite)'), 'until', '', { type: 'date' })}${field(t('Or suspend for N days'), 'days', '', { type: 'number' })}<div style="padding-top:22px"><button class="bad">${t('Suspend')}</button></div></form>`}
 <form method="post" action="/admin/companies/${co.id}/delete" class="card" style="border:1px solid var(--bad)" onsubmit="return confirm('${t('Delete this client and all its data? A full archive copy is kept.')}')">${csrfField(c)}<h3 style="color:var(--bad)">${t('Delete client')}</h3><p class="mut">${t('Removes the client, its users, customers, invoices and devices. A full archive copy is kept in the database. Type the exact client name to confirm.')}</p>${field(t('Client name'), 'confirm_name', '')}<p><button class="bad">${t('Delete client')}</button></p></form>
@@ -496,6 +536,7 @@ ${P.adminSubscriptionCard(req, c, co)}
       for (const tb of ['vouchers', 'voucher_batches', 'voucher_templates', 'cust_payments', 'cust_invoices', 'expenses', 'packages', 'payments', 'router_cmds', 'router_items', 'device_alerts', 'device_groups', 'devices', 'plan_requests', 'invoices', 'customers']) run(`DELETE FROM ${tb} WHERE company_id=?`, co.id);
       run('DELETE FROM sessions WHERE user_id IN (SELECT id FROM users WHERE company_id=?)', co.id);
       run('DELETE FROM tenant_domains WHERE company_id=?', co.id);
+      run('DELETE FROM view_sessions WHERE company_id=?', co.id);
       run('DELETE FROM app_settings WHERE k LIKE ?', `enrollsig:${co.id}:%`);
       run('DELETE FROM reset_requests WHERE user_id IN (SELECT id FROM users WHERE company_id=?)', co.id);
       run('DELETE FROM reset_tokens WHERE user_id IN (SELECT id FROM users WHERE company_id=?)', co.id);

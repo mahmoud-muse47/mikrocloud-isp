@@ -124,6 +124,7 @@ CREATE INDEX IF NOT EXISTS idx_router_cmds_dev ON router_cmds(device_id, status)
     CREATE TABLE IF NOT EXISTS vouchers(id INTEGER PRIMARY KEY AUTOINCREMENT, company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE, batch_id INTEGER NOT NULL REFERENCES voucher_batches(id) ON DELETE CASCADE, username TEXT NOT NULL, password TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'unused', used_at TEXT, sold_at TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), UNIQUE(company_id, username));
     CREATE INDEX IF NOT EXISTS idx_vouchers_batch ON vouchers(batch_id);
     CREATE TABLE IF NOT EXISTS deleted_companies(id INTEGER PRIMARY KEY AUTOINCREMENT, company_id INTEGER, name TEXT NOT NULL, deleted_at TEXT NOT NULL DEFAULT (datetime('now')), deleted_by TEXT DEFAULT '', snapshot TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS view_sessions(token_hash TEXT PRIMARY KEY, super_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS app_settings(k TEXT PRIMARY KEY, v TEXT NOT NULL);`);
   if (!db.prepare('SELECT 1 x FROM plans LIMIT 1').get()) {
     const ins = db.prepare(`INSERT INTO plans(code,name_en,name_ar,desc_en,desc_ar,sort_order,recommended,trial_eligible,trial_days,price_monthly,price_quarterly,price_semiannual,price_annual,

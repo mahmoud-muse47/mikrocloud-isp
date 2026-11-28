@@ -36,6 +36,7 @@ form.loading .spin{display:inline-block}@keyframes s{to{transform:rotate(360deg)
 .side a:hover{background:#eff6ff;border-color:var(--p);color:var(--p)}.side a:active{transform:translateY(2px);box-shadow:0 0 0 #cbd5e1}
 .side summary{display:block;list-style:none;cursor:pointer;padding:11px 14px;margin:0 0 9px;border-radius:10px;background:linear-gradient(#fff,#f1f5f9);border:1px solid #cbd5e1;box-shadow:0 2px 0 #cbd5e1,0 4px 10px rgba(15,23,42,.08);color:var(--tx);font-size:15px;font-weight:500;line-height:1.3}.side summary::-webkit-details-marker{display:none}.side summary:after{content:'\\25BE';float:inline-end}.side details:not([open]) summary:after{content:'\\25B8'}.side details a{margin-inline-start:18px;font-size:14px}.side a.on{background:var(--p);border-color:var(--p);color:#fff;box-shadow:0 2px 0 #1d4ed8,0 4px 10px rgba(37,99,235,.35)}.side a:last-child{margin-bottom:0}
 .cl{--p:#16a34a}.cl header{background:#14532d}.cl a{color:#15803d}.cl header a{color:#d1fae5}.cl .side a{color:var(--tx)}.cl .side a:hover{background:#f0fdf4}.cl .side a.on,.cl .side a.on:hover{color:#fff;box-shadow:0 2px 0 #15803d,0 4px 10px rgba(22,163,74,.35)}.cl .side summary{color:var(--tx)}.cl button:not(.sec):not(.bad),.cl .btn:not(.sec){background:#16a34a}.cl.login{background:linear-gradient(135deg,#052e16,#166534)}
+.vb{background:#b91c1c;color:#fff;text-align:center;padding:8px 12px;font-weight:600;position:sticky;top:0;z-index:50;display:flex;gap:14px;justify-content:center;align-items:center}.vb button{padding:4px 14px}
 .mo{position:fixed;inset:0;background:rgba(15,23,42,.55);display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px}.mb{background:#fff;border-radius:14px;border:2px solid #dc2626;max-width:440px;width:100%;padding:26px 24px;text-align:center;box-shadow:0 20px 50px rgba(0,0,0,.35);font-size:17px;line-height:1.6;color:#b91c1c;font-weight:600}.mb .bt{margin-top:18px;display:flex;gap:10px;justify-content:center}.mb button{min-width:100px;font-size:16px;background:#dc2626;color:#fff;border:0;border-radius:9px;padding:9px 18px;cursor:pointer}.mb button.sec{background:#e2e8f0;color:#334155}.mb.ok{border-color:#16a34a;color:#166534}.mb.ok button{background:#16a34a}.mb.warn{border-color:#d97706;color:#b45309}.mb.warn button{background:#d97706}
 @media(max-width:800px){.shell{grid-template-columns:1fr}.side{grid-column:1;grid-row:1;position:static}.shell main{grid-row:2;grid-column:1}}`;
 const js = `document.addEventListener('submit',e=>{e.target.classList&&e.target.classList.add('loading')});
@@ -54,16 +55,16 @@ var a=document.querySelector('[data-autorefresh]');if(a)setInterval(function(){v
 function tp(id,b){var i=document.getElementById(id);i.type=i.type==='password'?'text':'password'}`;
 
 function page(ctx, title, body, nav = '') {
-  const { i, user, csrf, flash, path } = ctx;
+  const { i, user, csrf, flash, path, viewAs } = ctx;
   const t = i.t;
   const side = !!(user && nav);
   const other = i.lang === 'ar' ? 'en' : 'ar';
   return `<!doctype html><html lang="${i.lang}" dir="${i.rtl ? 'rtl' : 'ltr'}"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)} - ${esc(BRAND)}</title><style>${css}</style></head><body class="${user && user.role !== 'super_admin' ? 'cl' : ''}">
-<header><span class="brand">${esc(BRAND)}</span>${side ? '' : nav}<span class="sp"></span>
+${viewAs ? `<div class="vb"><span>${esc(t('View only'))}: ${esc(viewAs.name)}</span><form id="vx" method="post" action="/view-as/exit" style="display:inline"><input type="hidden" name="_csrf" value="${esc(csrf)}"><button class="sec">${esc(t('Exit view'))}</button></form></div>` : ''}<header><span class="brand">${esc(BRAND)}</span>${side ? '' : nav}<span class="sp"></span>
 <a href="/lang/${other}?back=${encodeURIComponent(path || '/')}">${other === 'ar' ? 'العربية' : 'English'}</a>
 ${user ? `<a href="/account">${esc(user.name)}</a><form class="inline" method="post" action="/logout"><input type="hidden" name="_csrf" value="${esc(csrf)}"><button class="sec">${t('Logout')}</button></form>` : ''}</header>
-${side ? `<div class="shell" style="--dir:${i.rtl ? 'rtl' : 'ltr'}">` : ''}<main>${body}</main>${side ? `<aside class="side" id="side">${nav}</aside></div>` : ''}<script>${js}</script>${flash ? `<script>mcModal(${JSON.stringify(String(flash.msg)).replace(/</g, '\\u003c')},null,${JSON.stringify(flash.type === 'err' ? '' : flash.type === 'warn' ? 'warn' : 'ok')})</script>` : ''}</body></html>`;
+${side ? `<div class="shell" style="--dir:${i.rtl ? 'rtl' : 'ltr'}">` : ''}<main>${body}</main>${side ? `<aside class="side" id="side">${nav}</aside></div>` : ''}<script>${js}</script>${viewAs ? `<script>document.querySelectorAll('form:not(#vx) button,form:not(#vx) input[type=submit]').forEach(function(b){b.disabled=true;b.title='View only'})</script>` : ''}${flash ? `<script>mcModal(${JSON.stringify(String(flash.msg)).replace(/</g, '\\u003c')},null,${JSON.stringify(flash.type === 'err' ? '' : flash.type === 'warn' ? 'warn' : 'ok')})</script>` : ''}</body></html>`;
 }
 const csrfField = (ctx) => `<input type="hidden" name="_csrf" value="${esc(ctx.csrf)}">`;
 const infoGrid = (items) => `<div class="info">${items.map(([l, x]) => `<div><small>${esc(l)}</small><strong>${x === undefined || x === null || x === '' ? '-' : x}</strong></div>`).join('')}</div>`;
