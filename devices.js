@@ -17,7 +17,7 @@ const PAGES = [['all', 'All Devices', '/app/network'], ['routers_main', 'Main Ro
   ['aps', 'Access Points', '/app/network/access-points'], ['wireless', 'Wireless Devices', '/app/network/wireless'], ['switches', 'Switches', '/app/network/switches'], ['fiber', 'Fiber Devices', '/app/network/fiber'],
   ['topology', 'Network Topology', '/app/network/topology'], ['discovery', 'Device Discovery', '/app/network/discovery'], ['groups', 'Device Groups', '/app/network/groups'],
   ['alerts', 'Device Alerts', '/app/network/alerts'], ['logs', 'Device Activity Logs', '/app/network/logs'],
-  ['rusers', 'Router Users', '/app/network/router-users'], ['sessions', 'Live Sessions', '/app/network/sessions'], ['cmds', 'Router Commands', '/app/network/commands']];
+  ['rusers', 'Router Users', '/app/network/router-users'], ['sessions', 'Live Sessions', '/app/network/sessions'], ['cmds', 'Router Commands', '/app/network/commands'], ['rsync', 'Cloud Sync', '/app/network/sync']];
 const MAC = /^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$/;
 const IPV4 = /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}$/;
 const clean = (v, max = 200) => String(v ?? '').trim().slice(0, max);

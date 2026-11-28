@@ -618,6 +618,7 @@ ${P.adminSubscriptionCard(req, c, co)}
       run('DELETE FROM tenant_domains WHERE company_id=?', co.id);
       run('DELETE FROM view_sessions WHERE company_id=?', co.id);
       run('DELETE FROM app_settings WHERE k LIKE ?', `enrollsig:${co.id}:%`);
+      run('DELETE FROM app_settings WHERE k=?', `autosync:${co.id}`);
       run('DELETE FROM reset_requests WHERE user_id IN (SELECT id FROM users WHERE company_id=?)', co.id);
       run('DELETE FROM reset_tokens WHERE user_id IN (SELECT id FROM users WHERE company_id=?)', co.id);
       run('DELETE FROM users WHERE company_id=?', co.id);
