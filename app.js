@@ -4,7 +4,7 @@ const { hashPassword, verifyPassword, passwordProblem, sha } = require('./db');
 const { make } = require('./i18n');
 const V = require('./views');
 const { init: plansInit } = require('./plans');
-const { init: devicesInit, PAGES: DEV_PAGES } = require('./devices');
+const { init: devicesInit, PAGES: DEV_PAGES, mkBadge, mkFirst } = require('./devices');
 const { init: paymentsInit } = require('./payments');
 const { init: financeInit } = require('./finance');
 const { init: vouchersInit } = require('./vouchers');
@@ -480,6 +480,7 @@ $('plan_id').onchange=fill;$('period').onchange=upd;$('sub_start').onchange=upd;
     const emps = q('SELECT * FROM users WHERE company_id=? ORDER BY id', co.id);
     const cust = q1('SELECT count(*) n FROM customers WHERE company_id=?', co.id).n;
     const acts = q('SELECT * FROM audit_log WHERE company_id=? ORDER BY id DESC LIMIT 15', co.id);
+    const devs = mkFirst(q('SELECT * FROM devices WHERE company_id=? ORDER BY id DESC', co.id));
     const act = (path, label, cls = '') => `<form class="inline" method="post" action="/admin/companies/${co.id}/${path}">${csrfField(c)}<button class="${cls}">${label}</button></form>`;
     const link = req.flash && req.flash.link ? '' : '';
     res.send(page(c, co.name, `<div class="card"><div class="head"><h3>${esc(co.name)} ${badge(statusOf(co), t)}</h3><div class="acts"><a class="btn sec" href="/admin/companies/${co.id}/activity">${t('Activity log')}</a> ${act('view-as', t('View as client (read only)'), 'sec')} <a class="btn sec" href="/admin/companies/${co.id}/domains">${t('Custom domains')}</a> <a class="btn sec" href="/admin/companies/${co.id}/export">${t('Export')}</a></div></div>
@@ -490,6 +491,7 @@ ${co.status === 'suspended' ? `<p class="flash err">${t('Suspended')}${co.suspen
 <div class="card"><h3>${t('Company profile')}</h3><form method="post" action="/admin/companies/${co.id}/edit">${csrfField(c)}${companyForm(c, t, co)}<p><button>${t('Save')}</button></p></form></div>
 ${P.adminSubscriptionCard(req, c, co)}
 <div class="card"><h3>${t('Employees')}</h3><div class="tbl"><table><tr><th>${t('Name')}</th><th>${t('Username')}</th><th>${t('Role')}</th><th>${t('Status')}</th><th></th></tr>${emps.map((u) => `<tr><td>${esc(u.name)}</td><td>${esc(u.username)}</td><td>${esc(u.role === 'company_admin' ? t('Company admin') : u.emp_role)}</td><td>${badge(u.status, t)}</td><td>${u.role === 'company_admin' ? act(`reset/${u.id}`, t('Reset password link'), 'sec') + ' ' : ''}<form class="inline" method="post" action="/admin/companies/${co.id}/newpass/${u.id}" onsubmit="return confirm('${t('Create a new password for this user? The old one stops working.')}')">${csrfField(c)}<button class="sec">${t('New password')}</button></form></td></tr>`).join('')}</table></div></div>
+<div class="card"><h3>${t('Devices')} (${devs.length})</h3><div class="tbl"><table><tr><th>${t('Device name')}</th><th>${t('Device type')}</th><th>${t('Manufacturer')}</th><th>${t('Device model')}</th><th>${t('IP address')}</th><th>${t('MAC address')}</th><th>${t('Last connection')}</th></tr>${devs.map((d) => `<tr><td>${esc(d.name)}${mkBadge(d)}</td><td>${esc(String(d.category).replace(/^custom:/, ''))}</td><td>${esc(d.manufacturer)}</td><td>${esc(d.model)}</td><td>${esc(d.ip)}</td><td>${esc(d.mac)}</td><td>${esc(d.last_ok || '-')}</td></tr>`).join('') || `<tr><td colspan="7">${t('No results')}</td></tr>`}</table></div></div>
 <div class="card"><h3>${t('Recent activity')}</h3><div class="tbl"><table>${acts.map((a) => `<tr><td>${esc(a.ts)}</td><td>${esc(a.action)}</td><td>${esc(a.detail)}</td></tr>`).join('')}</table></div></div>`, nav(req)));
   });
   app.post('/admin/companies/:id/edit', needSuper, (req, res) => {

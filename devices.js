@@ -64,12 +64,12 @@ function init(h, P) {
   function table(req, rows) {
     const t = req.i.t, byId = Object.fromEntries(q('SELECT id,name FROM devices WHERE company_id=?', req.user.company_id).map((r) => [r.id, r.name]));
     return `<div class="card tbl" data-autorefresh="1"><table><tr><th></th><th>${t('Device name')}</th><th>${t('Device type')}</th><th>${t('Manufacturer')}</th><th>${t('Device model')}</th><th>${t('IP address')}</th><th>${t('MAC address')}</th><th>${t('Location')}</th><th>${t('Parent device')}</th><th>${t('Connection status')}</th><th>${t('Last connection')}</th><th>${t('Uptime')}</th><th></th></tr>
-${rows.map((d) => { const st = liveStatus(d); return `<tr><td>${dot(st, t)}</td><td><a href="/app/network/devices/${d.id}">${esc(d.name)}</a></td><td>${esc(catLabel(d, t))}</td><td>${esc(d.manufacturer)}</td><td>${esc(d.model)}</td><td>${esc(d.ip)}</td><td>${esc(d.mac)}</td><td>${esc([d.location, d.building, d.area].filter(Boolean).join(' / '))}</td><td>${esc(byId[d.parent_id] || '-')}</td><td>${t(st[0].toUpperCase() + st.slice(1))}</td><td>${esc(d.last_ok || '-')}</td><td>${t('Not reported')}</td><td><a href="/app/network/devices/${d.id}">${t('View')}</a></td></tr>`; }).join('') || `<tr><td colspan="13">${t('No results')}</td></tr>`}</table></div>`;
+${rows.map((d) => { const st = liveStatus(d); return `<tr><td>${dot(st, t)}</td><td><a href="/app/network/devices/${d.id}">${esc(d.name)}</a>${mkBadge(d)}</td><td>${esc(catLabel(d, t))}</td><td>${esc(d.manufacturer)}</td><td>${esc(d.model)}</td><td>${esc(d.ip)}</td><td>${esc(d.mac)}</td><td>${esc([d.location, d.building, d.area].filter(Boolean).join(' / '))}</td><td>${esc(byId[d.parent_id] || '-')}</td><td>${t(st[0].toUpperCase() + st.slice(1))}</td><td>${esc(d.last_ok || '-')}</td><td>${t('Not reported')}</td><td><a href="/app/network/devices/${d.id}">${t('View')}</a></td></tr>`; }).join('') || `<tr><td colspan="13">${t('No results')}</td></tr>`}</table></div>`;
   }
   const listPage = (key, title) => (req, res) => {
     const t = req.i.t, c = ctx(req), cats = KINDS[key];
     const all = q('SELECT * FROM devices WHERE company_id=? ORDER BY id DESC', req.user.company_id);
-    const rows = cats ? all.filter((d) => cats.includes(d.category)) : all;
+    const rows = mkFirst(cats ? all.filter((d) => cats.includes(d.category)) : all);
     const sm = { online: 0, unknown: 0, offline: 0, unstable: 0 }; rows.forEach((d) => { sm[liveStatus(d)]++; });
     res.send(page(c, title, sub(req, key, `<div class="card"><a class="btn" style="color:#fff" href="/app/network/discovery">${t('Connect MikroTik (automatic)')}</a> <span class="mut">${Object.entries(sm).map(([k, v]) => `${dot(k, t)} ${v}`).join(' &nbsp; ')}</span></div>${table(req, rows)}`), nav(req)));
   };
@@ -330,4 +330,11 @@ ${kv('Credentials', d.cred_enc ? `${d.cred_user} / ******** (${t('encrypted')})`
   });
   return { liveStatus, evaluate, decrypt };
 }
-module.exports = { init, CATS, PAGES };
+
+// MikroTik detection (display only): manufacturer text, model family, or a MikroTik MAC prefix (OUI)
+const MK_OUI = ['00:0C:42', '08:55:31', '18:FD:74', '2C:C8:1B', '48:8F:5A', '4C:5E:0C', '64:D1:54', '6C:3B:6B', '74:4D:28', '78:9A:18', 'B8:69:F4', 'C4:AD:34', 'CC:2D:E0', 'D4:01:C3', 'D4:CA:6D', 'DC:2C:6E', 'E4:8D:8C', 'F4:1E:57'];
+const MK_MODEL = /^(RB|CCR|CRS|CSS|hAP|hEX|cAP|wAP|CHR|SXT|LHG|NetBox|NetMetal|mAP|PowerBox|KNOT|LDF|DISC|BaseBox|QRT|RBM)/i;
+const isMikrotik = (d) => /mikrotik|routerboard/i.test(d.manufacturer || '') || MK_MODEL.test(String(d.model || '').trim()) || MK_OUI.includes(String(d.mac || '').toUpperCase().replace(/-/g, ':').slice(0, 8));
+const mkBadge = (d) => (isMikrotik(d) ? ' <span class="mkbadge" style="display:inline-block;background:#e0f2fe;color:#075985;border:1px solid #7dd3fc;border-radius:999px;padding:1px 8px;font-size:12px;font-weight:600;margin-inline-start:6px">MikroTik</span>' : '');
+const mkFirst = (rows) => [...rows.filter(isMikrotik), ...rows.filter((d) => !isMikrotik(d))];
+module.exports = { init, CATS, PAGES, isMikrotik, mkBadge, mkFirst };
