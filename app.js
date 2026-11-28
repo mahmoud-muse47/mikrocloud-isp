@@ -35,11 +35,12 @@ const nowIso = () => new Date().toISOString().slice(0, 19).replace('T', ' ');
 const addDays = (d, n) => new Date(d.getTime() + n * 864e5).toISOString().slice(0, 10);
 const clean = (v, max = 300) => String(v ?? '').trim().slice(0, max);
 
+const { isCloudflare } = require('./cfip');
 function createApp(db, opts = {}) {
   const app = express();
   app.disable('x-powered-by');
   app.set('trust proxy', opts.trustProxy ? 1 : false);
-  app.use((req, res, next) => { const h = opts.trustProxy && req.headers['cf-connecting-ip']; if (h && /^[0-9a-fA-F:.]{3,45}$/.test(h)) Object.defineProperty(req, 'ip', { value: h }); next(); });
+  app.use((req, res, next) => { const h = opts.trustProxy && isCloudflare(req.ip) && req.headers['cf-connecting-ip']; if (h && /^[0-9a-fA-F:.]{3,45}$/.test(h)) Object.defineProperty(req, 'ip', { value: h }); next(); });
   const PT = makePortal({ secureCookies: opts.secureCookies });
   PT.bind(db);
   app.use(PT.hostGuard);
@@ -69,7 +70,7 @@ function createApp(db, opts = {}) {
   setInterval(() => { try { reactivate(); } catch (e) { /* retried on next request */ } }, 10 * 60 * 1000).unref();
   app.use((req, res, next) => {
     if (Date.now() - lastReact > 30000) { lastReact = Date.now(); try { reactivate(); } catch (e) { /* ignore */ } }
-    const cookies = Object.fromEntries((req.headers.cookie || '').split(';').map((c) => c.trim().split('=')).filter((p) => p[0]).map(([k, ...v]) => [k, decodeURIComponent(v.join('='))]));
+    const cookies = Object.fromEntries((req.headers.cookie || '').split(';').map((c) => c.trim().split('=')).filter((p) => p[0]).map(([k, ...v]) => [k, (() => { try { return decodeURIComponent(v.join('=')); } catch { return ''; } })()]));
     req.cookies = cookies;
     req.i = make(cookies.lang === 'en' ? 'en' : 'ar');
     req.user = null; req.session = null;
@@ -211,6 +212,8 @@ function createApp(db, opts = {}) {
     }
     if (u.totp_on) {
       const pt = crypto.randomBytes(24).toString('hex');
+      if (pend2fa.size > 500) for (const [k2, v2] of pend2fa) if (v2.exp < Date.now()) pend2fa.delete(k2);
+      if (pend2fa.size > 5000) pend2fa.clear();
       pend2fa.set(pt, { uid: u.id, remember: !!req.body.remember, exp: Date.now() + 5 * 60e3, tries: 0 });
       res.append('Set-Cookie', `p2=${pt}; HttpOnly; SameSite=Lax; Path=/; Max-Age=300${opts.secureCookies ? '; Secure' : ''}`);
       log(1, 'password_ok_2fa_pending');

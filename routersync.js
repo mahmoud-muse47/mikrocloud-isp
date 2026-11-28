@@ -127,7 +127,7 @@ const rtStatus = (lastOk) => {
 function init(h, P, shared) {
   const { app, q, q1, run, audit, ctx, go, needAdmin, nav, deny } = h;
   const hits = new Map();
-  const tooMany = (k, max) => { const n = Date.now(), a = (hits.get(k) || []).filter((x) => n - x < 60000); a.push(n); hits.set(k, a); if (hits.size > 5000) hits.clear(); return a.length > max; };
+  const tooMany = (k, max) => { const n = Date.now(), a = (hits.get(k) || []).filter((x) => n - x < 60000); a.push(n); hits.set(k, a); if (hits.size > 5000) { for (const [k2, v2] of hits) if (!v2.length || n - v2[v2.length - 1] > 60000) hits.delete(k2); if (hits.size > 5000) hits.clear(); } return a.length > max; };
   const parseKV = (body) => { const kv = {}, rs = []; for (const line of String(body || '').split(/\r?\n/).slice(0, 80)) { const k = line.indexOf('='); if (k < 1) continue; const key = line.slice(0, k).trim(), v = line.slice(k + 1); if (key === 'r' || key === 'a') rs.push(v); else if (!(key in kv)) kv[key] = v; } return { kv, rs }; };
   // token -> company, then router -> device (by MAC, else identity name). Never a tenant id from the client.
   function auth(req, res) {

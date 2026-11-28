@@ -260,7 +260,7 @@ ${kv('Credentials', d.cred_enc ? `${d.cred_user} / ******** (${t('encrypted')})`
 
   RS.init(h, P);
   const hits = new Map();
-  const tooMany = (k, max) => { const n = Date.now(), a = (hits.get(k) || []).filter((x) => n - x < 60000); a.push(n); hits.set(k, a); if (hits.size > 5000) hits.clear(); return a.length > max; };
+  const tooMany = (k, max) => { const n = Date.now(), a = (hits.get(k) || []).filter((x) => n - x < 60000); a.push(n); hits.set(k, a); if (hits.size > 5000) { for (const [k2, v2] of hits) if (!v2.length || n - v2[v2.length - 1] > 60000) hits.delete(k2); if (hits.size > 5000) hits.clear(); } return a.length > max; };
   const MACRE = /^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/;
   const txt = (v, m) => String(v || '').replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, m);
   function upsert(cid, o, live) {
